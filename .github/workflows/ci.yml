@@ -1,0 +1,90 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Cancel in-flight runs on the same ref when a new push lands.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0          # disabled for cache efficiency in CI
+  RUST_BACKTRACE: short
+
+jobs:
+  # The gating job — must pass for a PR to merge.
+  test:
+    name: cargo test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ci
+      # Restrict to the lib crate — `examples/basic` pulls in the dioxus
+      # devtools stack which is slow to build and isn't what we're testing.
+      - name: Test dx-auth
+        run: cargo test --package dx-auth
+
+  # Compile-check the realistic feature combos so a future refactor doesn't
+  # silently break consumers who turn off `default-features`. Pure
+  # `cargo check`, no test execution — fast.
+  feature-matrix:
+    name: check ${{ matrix.features }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        features:
+          - "server,sqlite"
+          - "server,sqlite,oauth-github"
+          - "server,sqlite,mfa,mail,ratelimit"
+          - "server,sqlite,ui,oauth-github,mfa,mail,ratelimit"
+          - "server,postgres,oauth-github,mfa,mail,ratelimit"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: features-${{ matrix.features }}
+      - name: Check
+        run: |
+          cargo check \
+            --package dx-auth \
+            --no-default-features \
+            --features "${{ matrix.features }}"
+
+  # ---------------------------------------------------------------
+  # Advisory jobs — don't gate merges yet. The repo isn't fmt/clippy-clean
+  # today; flip `continue-on-error: false` once it is.
+  # ---------------------------------------------------------------
+
+  fmt:
+    name: cargo fmt (advisory)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all -- --check
+
+  clippy:
+    name: cargo clippy (advisory)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ci
+      - run: cargo clippy --package dx-auth --all-targets -- -D warnings

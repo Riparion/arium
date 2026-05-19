@@ -143,7 +143,7 @@ fn Home() -> Element {
     rsx! {
         main { class: "app-shell",
             if logged_in {
-                ProfileCard { profile: current }
+                ProfileCard { profile: current.clone() }
                 div { class: "app-actions-buttons",
                     Button {
                         variant: ButtonVariant::Ghost,
@@ -154,25 +154,39 @@ fn Home() -> Element {
                         "Sign out"
                     }
                 }
-                Tabs {
-                    default_value: "account".to_string(),
-                    TabList {
-                        TabTrigger { index: 0_usize, value: "account".to_string(), "Account" }
-                        TabTrigger { index: 1_usize, value: "mfa".to_string(),     "Two-factor auth" }
-                        TabTrigger { index: 2_usize, value: "admin".to_string(),   "Admin" }
-                        TabTrigger { index: 3_usize, value: "audit".to_string(),   "Audit log" }
-                    }
-                    TabContent { index: 0_usize, value: "account".to_string(),
-                        dx_auth::ui::AccountSettings { mfa_setup_href: "/account/mfa" }
-                    }
-                    TabContent { index: 1_usize, value: "mfa".to_string(),
-                        MfaSetup {}
-                    }
-                    TabContent { index: 2_usize, value: "admin".to_string(),
-                        AdminTabContent {}
-                    }
-                    TabContent { index: 3_usize, value: "audit".to_string(),
-                        dx_auth::ui::AuditLog {}
+                {
+                    let can_admin_users = current.has_permission("admin:users:read");
+                    let can_audit = current.has_permission("admin:audit:read");
+                    rsx! {
+                        Tabs {
+                            default_value: "account".to_string(),
+                            TabList {
+                                TabTrigger { index: 0_usize, value: "account".to_string(), "Account" }
+                                TabTrigger { index: 1_usize, value: "mfa".to_string(),     "Two-factor auth" }
+                                if can_admin_users {
+                                    TabTrigger { index: 2_usize, value: "admin".to_string(),   "Admin" }
+                                }
+                                if can_audit {
+                                    TabTrigger { index: 3_usize, value: "audit".to_string(),   "Audit log" }
+                                }
+                            }
+                            TabContent { index: 0_usize, value: "account".to_string(),
+                                dx_auth::ui::AccountSettings { mfa_setup_href: "/account/mfa" }
+                            }
+                            TabContent { index: 1_usize, value: "mfa".to_string(),
+                                MfaSetup {}
+                            }
+                            if can_admin_users {
+                                TabContent { index: 2_usize, value: "admin".to_string(),
+                                    AdminTabContent {}
+                                }
+                            }
+                            if can_audit {
+                                TabContent { index: 3_usize, value: "audit".to_string(),
+                                    dx_auth::ui::AuditLog {}
+                                }
+                            }
+                        }
                     }
                 }
             } else if pending_mfa() {

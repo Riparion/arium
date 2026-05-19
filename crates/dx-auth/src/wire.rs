@@ -32,6 +32,15 @@ pub struct UserProfile {
     pub email: Option<String>,
     pub avatar_url: Option<String>,
     pub html_url: Option<String>,
+    /// All permission tokens this user resolves to (direct + role-inherited).
+    /// Empty for anonymous users. UI uses this to gate admin-only views.
+    pub permissions: Vec<String>,
+}
+
+impl UserProfile {
+    pub fn has_permission(&self, token: &str) -> bool {
+        self.permissions.iter().any(|p| p == token)
+    }
 }
 
 /// Setup payload returned to the client when starting MFA enrollment.

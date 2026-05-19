@@ -155,9 +155,16 @@ pub async fn logout() -> Result<()> {
 /// Returns the current user's public profile, including any third-party data
 /// cached from an OAuth provider's user-info response. Returns an
 /// authenticated=false default when the caller is anonymous.
-#[get("/api/user/profile", auth: auth::Session)]
+#[get("/api/user/profile", auth: auth::Session, db: DbExtension)]
 pub async fn get_current_user_profile() -> Result<UserProfile> {
     let user = auth.current_user.unwrap();
+    let permissions = if user.anonymous {
+        Vec::new()
+    } else {
+        auth::list_permissions_for_user(&db.0, user.id as i64)
+            .await
+            .unwrap_or_default()
+    };
     Ok(UserProfile {
         is_authenticated: !user.anonymous,
         username: user.username,
@@ -165,6 +172,7 @@ pub async fn get_current_user_profile() -> Result<UserProfile> {
         email: user.email,
         avatar_url: user.avatar_url,
         html_url: user.html_url,
+        permissions,
     })
 }
 
@@ -814,7 +822,7 @@ async fn summarise_admin_user(
 }
 
 /// List users for the admin browser. Capped at 500 per request.
-#[get("/api/admin/users", auth: auth::Session, db: DbExtension)]
+#[get("/api/admin/users?limit&offset", auth: auth::Session, db: DbExtension)]
 pub async fn admin_list_users(
     limit: i64,
     offset: i64,
@@ -829,7 +837,7 @@ pub async fn admin_list_users(
 }
 
 /// Full detail for a single user (admin view).
-#[get("/api/admin/users/get", auth: auth::Session, db: DbExtension)]
+#[get("/api/admin/users/get?user_id", auth: auth::Session, db: DbExtension)]
 pub async fn admin_get_user(user_id: i64) -> Result<Option<AdminUserDetail>> {
     require_admin_perm(&auth, &db.0, "admin:users:read").await?;
     let Some(row) = auth::get_user_for_admin(&db.0, user_id).await? else {

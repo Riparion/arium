@@ -42,13 +42,35 @@ pub enum ProviderId {
     Github,
 }
 
-/// Result of a sign-in or sign-up attempt. `EmailUnverified` is not an
-/// error: it's a successful auth that just needs the user to click the
-/// verification link before we'll log them in.
+/// Result of a sign-in or sign-up attempt.
+///
+/// `EmailUnverified` and `MfaRequired` are not errors: they're successful
+/// auth states that need an additional step before the user is fully signed
+/// in (open the verification email; submit a TOTP code).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LoginOutcome {
     LoggedIn,
     EmailUnverified,
+    MfaRequired,
+}
+
+/// Setup payload returned to the client when starting MFA enrollment.
+/// `recovery_codes` is the only time these appear in plaintext anywhere —
+/// the server only persists Argon2 hashes.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct MfaSetupView {
+    pub secret_base32: String,
+    pub qr_png_base64: String,
+    pub recovery_codes: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum MfaStatusView {
+    #[default]
+    Disabled,
+    /// Secret stored but the user hasn't confirmed enrollment with a TOTP yet.
+    Pending,
+    Enabled,
 }
 
 /// Profile fields safe to expose to the client.
@@ -125,8 +147,15 @@ fn main() {
         // Combined with Argon2 password verification (~100ms/attempt) this
         // is plenty for an example app; a real deployment would also want
         // path-aware tighter limits on the auth endpoints specifically.
+        //
+        // We use a custom key extractor: SmartIp checks X-Forwarded-For /
+        // X-Real-IP / Forwarded / ConnectInfo / socket. If none are present
+        // (e.g. `dx serve` doesn't always attach ConnectInfo locally) we
+        // fall back to a single shared bucket so the first visit doesn't
+        // 500 with "Unable To Extract Key!".
         let governor_config = std::sync::Arc::new(
             tower_governor::governor::GovernorConfigBuilder::default()
+                .key_extractor(LenientIpKeyExtractor)
                 .per_second(1)
                 .burst_size(30)
                 .finish()
@@ -177,6 +206,8 @@ enum Route {
     ResetPassword { token: String },
     #[route("/auth/verify?:token")]
     VerifyEmail { token: String },
+    #[route("/account/mfa")]
+    MfaSetup,
 }
 
 fn app() -> Element {
@@ -221,6 +252,7 @@ fn Home() -> Element {
 
     let mut auth_error = use_signal(String::new);
     let mut pending_email = use_signal::<Option<String>>(|| None);
+    let mut pending_mfa = use_signal(|| false);
 
     let on_login_submit = move |submission: LoginSubmit| {
         auth_error.set(String::new());
@@ -235,6 +267,9 @@ fn Home() -> Element {
                 Ok(LoginOutcome::LoggedIn) => profile.restart(),
                 Ok(LoginOutcome::EmailUnverified) => {
                     pending_email.set(Some(email_for_pending));
+                }
+                Ok(LoginOutcome::MfaRequired) => {
+                    pending_mfa.set(true);
                 }
                 Err(e) => auth_error.set(friendly_server_error(e)),
             }
@@ -255,6 +290,7 @@ fn Home() -> Element {
                         },
                         "Sign out"
                     }
+                    a { class: "app-link", href: "/account/mfa", "Two-factor auth" }
                     Button {
                         variant: ButtonVariant::Outline,
                         onclick: move |_| async move {
@@ -266,6 +302,20 @@ fn Home() -> Element {
 
                 if let Some(Ok(perms)) = permissions.value().as_ref() {
                     pre { class: "app-debug", "Permissions: {perms:?}" }
+                }
+            } else if pending_mfa() {
+                MfaChallenge {
+                    on_logged_in: move |_| {
+                        pending_mfa.set(false);
+                        profile.restart();
+                    },
+                    on_cancel: move |_| {
+                        pending_mfa.set(false);
+                        auth_error.set(String::new());
+                        spawn(async move {
+                            let _ = cancel_mfa_challenge().await;
+                        });
+                    },
                 }
             } else if let Some(email) = pending_email() {
                 VerificationPending {
@@ -339,6 +389,363 @@ fn VerificationPending(email: String, on_back: EventHandler<()>) -> Element {
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+#[component]
+fn MfaChallenge(on_logged_in: EventHandler<()>, on_cancel: EventHandler<()>) -> Element {
+    let mut code = use_signal(String::new);
+    let mut use_recovery = use_signal(|| false);
+    let mut error = use_signal(String::new);
+    let mut submitting = use_signal(|| false);
+
+    rsx! {
+        Card { class: "login-panel",
+            CardHeader {
+                CardTitle { "Two-factor authentication" }
+                CardDescription {
+                    if use_recovery() {
+                        "Enter one of your recovery codes."
+                    } else {
+                        "Enter the 6-digit code from your authenticator app."
+                    }
+                }
+            }
+            CardContent {
+                form {
+                    class: "auth-form",
+                    onsubmit: move |evt| {
+                        evt.prevent_default();
+                        let code_val = code.read().trim().to_string();
+                        if code_val.is_empty() {
+                            return;
+                        }
+                        error.set(String::new());
+                        submitting.set(true);
+                        spawn(async move {
+                            match verify_login_mfa(code_val).await {
+                                Ok(LoginOutcome::LoggedIn) => on_logged_in.call(()),
+                                Ok(_) => error.set("Unexpected response from server.".to_string()),
+                                Err(e) => error.set(friendly_server_error(e)),
+                            }
+                            code.set(String::new());
+                            submitting.set(false);
+                        });
+                    },
+
+                    div { class: "auth-field",
+                        Label {
+                            html_for: "mfa-code",
+                            class: "auth-label",
+                            if use_recovery() { "Recovery code" } else { "Authenticator code" }
+                        }
+                        Input {
+                            id: "mfa-code",
+                            r#type: "text",
+                            inputmode: if use_recovery() { "text" } else { "numeric" },
+                            autocomplete: "one-time-code",
+                            placeholder: if use_recovery() { "ABCD-EFGH-IJ" } else { "123 456" },
+                            value: "{code}",
+                            oninput: move |evt: FormEvent| code.set(evt.value()),
+                        }
+                    }
+
+                    if !error().is_empty() {
+                        div { class: "auth-error", role: "alert", "{error}" }
+                    }
+
+                    Button {
+                        variant: ButtonVariant::Primary,
+                        r#type: "submit",
+                        class: "auth-submit",
+                        if submitting() { "Verifying…" } else { "Verify" }
+                    }
+
+                    p { class: "auth-aux",
+                        a {
+                            href: "#",
+                            onclick: move |evt| {
+                                evt.prevent_default();
+                                use_recovery.set(!use_recovery());
+                                code.set(String::new());
+                                error.set(String::new());
+                            },
+                            if use_recovery() { "Use authenticator code" } else { "Use a recovery code" }
+                        }
+                    }
+                    p { class: "auth-aux",
+                        a {
+                            href: "#",
+                            onclick: move |evt| {
+                                evt.prevent_default();
+                                on_cancel.call(());
+                            },
+                            "Cancel sign in"
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn MfaSetup() -> Element {
+    let profile = use_resource(get_current_user_profile);
+    let mut status = use_resource(get_mfa_status);
+    let mut setup_info = use_signal::<Option<MfaSetupView>>(|| None);
+    let mut confirm_code = use_signal(String::new);
+    let mut error = use_signal(String::new);
+    let mut info_message = use_signal(String::new);
+    let mut busy = use_signal(|| false);
+
+    let current = profile()
+        .and_then(|r| r.ok())
+        .unwrap_or_default();
+
+    if !current.is_authenticated {
+        return rsx! {
+            main { class: "app-shell",
+                Card { class: "login-panel",
+                    CardHeader { CardTitle { "Sign in required" } }
+                    CardContent {
+                        p { "You need to be signed in to manage two-factor auth." }
+                        p { a { href: "/", "Back to sign in" } }
+                    }
+                }
+            }
+        };
+    }
+
+    let status_value: MfaStatusView = status()
+        .and_then(|r| r.ok())
+        .unwrap_or_default();
+
+    rsx! {
+        main { class: "app-shell",
+            Card { class: "login-panel",
+                CardHeader {
+                    CardTitle { "Two-factor authentication" }
+                    CardDescription {
+                        match status_value {
+                            MfaStatusView::Enabled => "Two-factor authentication is on.",
+                            MfaStatusView::Pending => "Finish enrollment by entering a code from your app.",
+                            MfaStatusView::Disabled => "Protect your account with an authenticator app.",
+                        }
+                    }
+                }
+                CardContent {
+                    if !info_message().is_empty() {
+                        p { class: "auth-success", "{info_message}" }
+                    }
+                    if !error().is_empty() {
+                        div { class: "auth-error", role: "alert", "{error}" }
+                    }
+
+                    match status_value {
+                        MfaStatusView::Disabled => rsx! {
+                            div { class: "auth-form",
+                                if let Some(info) = setup_info() {
+                                    MfaSetupArtifacts { info: info.clone() }
+                                    MfaConfirmForm {
+                                        code: confirm_code,
+                                        busy,
+                                        on_submit: move |code_val: String| {
+                                            error.set(String::new());
+                                            busy.set(true);
+                                            spawn(async move {
+                                                match confirm_mfa_setup(code_val).await {
+                                                    Ok(()) => {
+                                                        info_message.set("Two-factor auth enabled.".to_string());
+                                                        setup_info.set(None);
+                                                        confirm_code.set(String::new());
+                                                        status.restart();
+                                                    }
+                                                    Err(e) => error.set(friendly_server_error(e)),
+                                                }
+                                                busy.set(false);
+                                            });
+                                        },
+                                    }
+                                } else {
+                                    Button {
+                                        variant: ButtonVariant::Primary,
+                                        class: "auth-submit",
+                                        onclick: move |_| {
+                                            error.set(String::new());
+                                            info_message.set(String::new());
+                                            busy.set(true);
+                                            spawn(async move {
+                                                match begin_mfa_setup().await {
+                                                    Ok(info) => {
+                                                        setup_info.set(Some(info));
+                                                        status.restart();
+                                                    }
+                                                    Err(e) => error.set(friendly_server_error(e)),
+                                                }
+                                                busy.set(false);
+                                            });
+                                        },
+                                        if busy() { "Setting up…" } else { "Set up two-factor auth" }
+                                    }
+                                }
+                            }
+                        },
+                        MfaStatusView::Pending => rsx! {
+                            div { class: "auth-form",
+                                if let Some(info) = setup_info() {
+                                    MfaSetupArtifacts { info: info.clone() }
+                                } else {
+                                    p {
+                                        "You started setting up two-factor auth but didn't finish. "
+                                        "Restart enrollment to get a fresh QR code and recovery codes."
+                                    }
+                                    Button {
+                                        variant: ButtonVariant::Outline,
+                                        class: "auth-submit",
+                                        onclick: move |_| {
+                                            error.set(String::new());
+                                            info_message.set(String::new());
+                                            busy.set(true);
+                                            spawn(async move {
+                                                match begin_mfa_setup().await {
+                                                    Ok(info) => setup_info.set(Some(info)),
+                                                    Err(e) => error.set(friendly_server_error(e)),
+                                                }
+                                                busy.set(false);
+                                            });
+                                        },
+                                        if busy() { "Restarting…" } else { "Restart enrollment" }
+                                    }
+                                }
+                                MfaConfirmForm {
+                                    code: confirm_code,
+                                    busy,
+                                    on_submit: move |code_val: String| {
+                                        error.set(String::new());
+                                        busy.set(true);
+                                        spawn(async move {
+                                            match confirm_mfa_setup(code_val).await {
+                                                Ok(()) => {
+                                                    info_message.set("Two-factor auth enabled.".to_string());
+                                                    setup_info.set(None);
+                                                    confirm_code.set(String::new());
+                                                    status.restart();
+                                                }
+                                                Err(e) => error.set(friendly_server_error(e)),
+                                            }
+                                            busy.set(false);
+                                        });
+                                    },
+                                }
+                            }
+                        },
+                        MfaStatusView::Enabled => rsx! {
+                            div { class: "auth-form",
+                                p { "Your account requires a 6-digit code on every sign-in." }
+                                Button {
+                                    variant: ButtonVariant::Destructive,
+                                    class: "auth-submit",
+                                    onclick: move |_| {
+                                        error.set(String::new());
+                                        info_message.set(String::new());
+                                        busy.set(true);
+                                        spawn(async move {
+                                            match disable_mfa_for_user().await {
+                                                Ok(()) => {
+                                                    info_message.set("Two-factor auth disabled.".to_string());
+                                                    setup_info.set(None);
+                                                    status.restart();
+                                                }
+                                                Err(e) => error.set(friendly_server_error(e)),
+                                            }
+                                            busy.set(false);
+                                        });
+                                    },
+                                    if busy() { "Disabling…" } else { "Disable two-factor auth" }
+                                }
+                            }
+                        },
+                    }
+
+                    p { class: "auth-aux", a { href: "/", "Back to account" } }
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn MfaSetupArtifacts(info: MfaSetupView) -> Element {
+    rsx! {
+        div { class: "mfa-artifacts",
+            p {
+                "Scan this QR code in your authenticator app, then enter a code below to confirm."
+            }
+            img {
+                class: "mfa-qr",
+                alt: "MFA QR code",
+                src: "data:image/png;base64,{info.qr_png_base64}",
+            }
+            p { class: "auth-aux",
+                "Can't scan? Enter this key manually: "
+                code { "{info.secret_base32}" }
+            }
+            div { class: "mfa-recovery",
+                strong { "Recovery codes" }
+                p {
+                    "Save these somewhere safe — each can be used once if you lose access to your "
+                    "authenticator. They won't be shown again."
+                }
+                ul { class: "mfa-recovery-list",
+                    for c in info.recovery_codes.iter() {
+                        li { key: "{c}", code { "{c}" } }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn MfaConfirmForm(
+    code: Signal<String>,
+    busy: Signal<bool>,
+    on_submit: EventHandler<String>,
+) -> Element {
+    let mut code = code;
+    rsx! {
+        form {
+            class: "auth-form",
+            onsubmit: move |evt| {
+                evt.prevent_default();
+                let val = code.read().trim().to_string();
+                if val.is_empty() { return; }
+                on_submit.call(val);
+            },
+            div { class: "auth-field",
+                Label {
+                    html_for: "mfa-confirm",
+                    class: "auth-label",
+                    "Authenticator code"
+                }
+                Input {
+                    id: "mfa-confirm",
+                    r#type: "text",
+                    inputmode: "numeric",
+                    autocomplete: "one-time-code",
+                    placeholder: "123 456",
+                    value: "{code}",
+                    oninput: move |evt: FormEvent| code.set(evt.value()),
+                }
+            }
+            Button {
+                variant: ButtonVariant::Primary,
+                r#type: "submit",
+                class: "auth-submit",
+                if busy() { "Confirming…" } else { "Confirm" }
             }
         }
     }
@@ -637,6 +1044,50 @@ type DbExtension = axum::Extension<sqlx::SqlitePool>;
 #[cfg(feature = "server")]
 type MailExtension = axum::Extension<crate::mail::Mailer>;
 
+#[cfg(feature = "server")]
+type SessionStore = axum_session::Session<axum_session_sqlx::SessionSqlitePool>;
+
+/// Session key under which we stash `(user_id, expires_at_unix)` between a
+/// successful password verification and the user submitting their TOTP code.
+#[cfg(feature = "server")]
+const MFA_PENDING_KEY: &str = "mfa_pending";
+/// How long the pending challenge survives in the session.
+#[cfg(feature = "server")]
+const MFA_PENDING_TTL_SECS: i64 = 5 * 60;
+
+/// Like `tower_governor::key_extractor::SmartIpKeyExtractor` but falls back
+/// to a fixed sentinel address when no IP source is available (e.g. local
+/// `dx serve` without `ConnectInfo`). Without this fallback the very first
+/// request 500s with "Unable To Extract Key!". In production behind a real
+/// proxy the smart path will fire and per-IP limits kick in normally.
+#[cfg(feature = "server")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct LenientIpKeyExtractor;
+
+#[cfg(feature = "server")]
+impl tower_governor::key_extractor::KeyExtractor for LenientIpKeyExtractor {
+    type Key = std::net::IpAddr;
+
+    fn extract<T>(
+        &self,
+        req: &http::Request<T>,
+    ) -> Result<Self::Key, tower_governor::GovernorError> {
+        use tower_governor::key_extractor::{KeyExtractor, SmartIpKeyExtractor};
+        let smart = SmartIpKeyExtractor;
+        Ok(smart.extract(req).unwrap_or(std::net::IpAddr::V4(
+            std::net::Ipv4Addr::UNSPECIFIED,
+        )))
+    }
+}
+
+#[cfg(feature = "server")]
+fn unix_now_seconds() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64
+}
+
 /// Kick off the password reset flow. Always returns Ok regardless of whether
 /// the email is registered, so the response can't be used to enumerate users.
 /// When the address is valid, an email with a reset link is sent via the
@@ -671,18 +1122,137 @@ pub async fn register_with_password(email: String, password: String) -> Result<L
 }
 
 /// Log in with an existing email/password account.
-#[post("/api/user/login-password", auth: auth::Session, db: DbExtension)]
+#[post("/api/user/login-password", auth: auth::Session, db: DbExtension, session: SessionStore)]
 pub async fn login_with_password(email: String, password: String) -> Result<LoginOutcome> {
     match auth::verify_password_user(&db.0, &email, &password).await? {
         auth::VerifyOutcome::Verified(user_id) => {
-            auth.login_user(user_id);
-            Ok(LoginOutcome::LoggedIn)
+            if auth::user_has_mfa(&db.0, user_id).await? {
+                // Stash the user id in the session, but do NOT log them in
+                // yet — verify_login_mfa finalizes the login after the
+                // second factor.
+                let expires_at = unix_now_seconds() + MFA_PENDING_TTL_SECS;
+                session.set(MFA_PENDING_KEY, (user_id, expires_at));
+                Ok(LoginOutcome::MfaRequired)
+            } else {
+                auth.login_user(user_id);
+                Ok(LoginOutcome::LoggedIn)
+            }
         }
         auth::VerifyOutcome::Unverified => Ok(LoginOutcome::EmailUnverified),
         auth::VerifyOutcome::Invalid => {
             Err(ServerFnError::new("Invalid email or password.").into())
         }
     }
+}
+
+/// Submit a TOTP (or recovery) code to finish the second-factor challenge
+/// kicked off by a successful password login.
+#[post("/api/user/verify-mfa", auth: auth::Session, db: DbExtension, session: SessionStore)]
+pub async fn verify_login_mfa(code: String) -> Result<LoginOutcome> {
+    let pending: Option<(i64, i64)> = session.get(MFA_PENDING_KEY);
+    let Some((user_id, expires_at)) = pending else {
+        return Err(ServerFnError::new(
+            "Your second-factor challenge expired. Please sign in again.",
+        )
+        .into());
+    };
+    if unix_now_seconds() > expires_at {
+        session.remove(MFA_PENDING_KEY);
+        return Err(ServerFnError::new(
+            "Your second-factor challenge expired. Please sign in again.",
+        )
+        .into());
+    }
+
+    if !auth::verify_mfa_challenge(&db.0, user_id, &code).await? {
+        return Err(ServerFnError::new("Code didn't match. Try again.").into());
+    }
+
+    session.remove(MFA_PENDING_KEY);
+    auth.login_user(user_id);
+    Ok(LoginOutcome::LoggedIn)
+}
+
+/// Cancel an in-flight MFA challenge so the user can restart sign-in.
+#[post("/api/user/cancel-mfa", session: SessionStore)]
+pub async fn cancel_mfa_challenge() -> Result<()> {
+    session.remove(MFA_PENDING_KEY);
+    Ok(())
+}
+
+/// Start MFA enrollment for the current user. Returns the secret + QR PNG +
+/// the freshly-generated recovery codes (the only time the codes appear in
+/// plaintext anywhere).
+#[post("/api/user/mfa/setup", auth: auth::Session, db: DbExtension)]
+pub async fn begin_mfa_setup() -> Result<MfaSetupView> {
+    let user = auth
+        .current_user
+        .as_ref()
+        .ok_or_else(|| ServerFnError::new("Not signed in."))?;
+    if user.anonymous {
+        return Err(ServerFnError::new("Not signed in.").into());
+    }
+
+    let label = user
+        .email
+        .clone()
+        .unwrap_or_else(|| user.username.clone());
+
+    let info = auth::setup_mfa_secret(&db.0, user.id as i64, &label).await?;
+    Ok(MfaSetupView {
+        secret_base32: info.secret_base32,
+        qr_png_base64: info.qr_png_base64,
+        recovery_codes: info.recovery_codes,
+    })
+}
+
+/// Confirm enrollment by submitting a current TOTP code.
+#[post("/api/user/mfa/confirm", auth: auth::Session, db: DbExtension)]
+pub async fn confirm_mfa_setup(code: String) -> Result<()> {
+    let user = auth
+        .current_user
+        .as_ref()
+        .ok_or_else(|| ServerFnError::new("Not signed in."))?;
+    if user.anonymous {
+        return Err(ServerFnError::new("Not signed in.").into());
+    }
+    if auth::enable_mfa(&db.0, user.id as i64, &code).await? {
+        Ok(())
+    } else {
+        Err(ServerFnError::new("That code didn't match. Try again.").into())
+    }
+}
+
+/// Turn off MFA for the current user. Wipes the secret and all recovery codes.
+#[post("/api/user/mfa/disable", auth: auth::Session, db: DbExtension)]
+pub async fn disable_mfa_for_user() -> Result<()> {
+    let user = auth
+        .current_user
+        .as_ref()
+        .ok_or_else(|| ServerFnError::new("Not signed in."))?;
+    if user.anonymous {
+        return Err(ServerFnError::new("Not signed in.").into());
+    }
+    auth::disable_mfa(&db.0, user.id as i64).await?;
+    Ok(())
+}
+
+/// Look up MFA enrollment state so the `/account/mfa` page can decide what
+/// to render.
+#[get("/api/user/mfa/status", auth: auth::Session, db: DbExtension)]
+pub async fn get_mfa_status() -> Result<MfaStatusView> {
+    let user = auth
+        .current_user
+        .as_ref()
+        .ok_or_else(|| ServerFnError::new("Not signed in."))?;
+    if user.anonymous {
+        return Ok(MfaStatusView::Disabled);
+    }
+    Ok(match auth::mfa_status(&db.0, user.id as i64).await? {
+        auth::MfaStatus::Disabled => MfaStatusView::Disabled,
+        auth::MfaStatus::Pending => MfaStatusView::Pending,
+        auth::MfaStatus::Enabled => MfaStatusView::Enabled,
+    })
 }
 
 /// Re-issue a verification email for an account that hasn't yet confirmed.

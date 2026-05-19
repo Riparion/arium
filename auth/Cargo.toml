@@ -42,6 +42,7 @@ lettre = { version = "0.11", default-features = false, features = [
     "hostname",
 ], optional = true }
 tower_governor = { version = "0.8", default-features = false, features = ["axum"], optional = true }
+totp-rs = { version = "5", features = ["qr", "gen_secret"], optional = true }
 
 execute = "0.2.13"
 serde = { version = "1.0.225", features = ["derive"] }
@@ -67,5 +68,6 @@ server = [
     "dep:argon2",
     "dep:lettre",
     "dep:tower_governor",
+    "dep:totp-rs",
 ]
 web = ["dioxus/web", "dep:dioxus-web"]

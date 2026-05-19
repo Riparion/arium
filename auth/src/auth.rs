@@ -557,6 +557,252 @@ pub(crate) async fn consume_verification_token(
     Ok(Some(user_id))
 }
 
+// =============== TOTP MFA ==================
+
+const MFA_ISSUER: &str = "dx-auth example";
+const RECOVERY_CODE_COUNT: usize = 10;
+
+/// Result of `setup_mfa_secret`: secret bytes (so the user can manually
+/// type them if their scanner is broken), a data-URL-ready PNG QR code,
+/// and the freshly-minted plaintext recovery codes (shown ONCE — only the
+/// hashes hit the DB).
+pub(crate) struct MfaSetupInfo {
+    pub secret_base32: String,
+    pub qr_png_base64: String,
+    pub recovery_codes: Vec<String>,
+}
+
+/// High-level status of MFA on a single account.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MfaStatus {
+    /// No secret stored.
+    Disabled,
+    /// Secret stored but the user hasn't confirmed enrollment yet.
+    Pending,
+    /// Secret stored AND `mfa_enabled_at` set.
+    Enabled,
+}
+
+/// Start MFA enrollment: generate a fresh secret + 10 recovery codes,
+/// persist the pending secret on the user (mfa_enabled_at stays NULL until
+/// they confirm a TOTP), and store Argon2 hashes of the recovery codes.
+/// Re-running on a still-pending or enabled account wipes the old data.
+pub(crate) async fn setup_mfa_secret(
+    db: &SqlitePool,
+    user_id: i64,
+    account_label: &str,
+) -> anyhow::Result<MfaSetupInfo> {
+    use argon2::password_hash::{rand_core::OsRng, PasswordHasher, SaltString};
+    use argon2::Argon2;
+    use totp_rs::{Algorithm, Secret, TOTP};
+
+    let secret = Secret::generate_secret();
+    let secret_base32 = match &secret {
+        Secret::Encoded(s) => s.clone(),
+        Secret::Raw(_) => secret.to_encoded().to_string(),
+    };
+
+    let totp = TOTP::new(
+        Algorithm::SHA1,
+        6,
+        1,
+        30,
+        secret.to_bytes()?,
+        Some(MFA_ISSUER.to_string()),
+        account_label.to_string(),
+    )?;
+    let qr_png_base64 = totp
+        .get_qr_base64()
+        .map_err(|e| anyhow::anyhow!("QR generation failed: {e}"))?;
+
+    let mut rng = OsRng;
+    let mut recovery_codes = Vec::with_capacity(RECOVERY_CODE_COUNT);
+    let mut recovery_hashes = Vec::with_capacity(RECOVERY_CODE_COUNT);
+    for _ in 0..RECOVERY_CODE_COUNT {
+        let code = generate_recovery_code(&mut rng);
+        let salt = SaltString::generate(&mut OsRng);
+        let hash = Argon2::default()
+            .hash_password(code.as_bytes(), &salt)
+            .map_err(|e| anyhow::anyhow!("hashing recovery code failed: {e}"))?
+            .to_string();
+        recovery_codes.push(code);
+        recovery_hashes.push(hash);
+    }
+
+    let mut tx = db.begin().await?;
+    sqlx::query("UPDATE users SET mfa_secret = ?, mfa_enabled_at = NULL WHERE id = ?")
+        .bind(&secret_base32)
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("DELETE FROM mfa_recovery_codes WHERE user_id = ?")
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await?;
+    for hash in &recovery_hashes {
+        sqlx::query("INSERT INTO mfa_recovery_codes (user_id, code_hash) VALUES (?, ?)")
+            .bind(user_id)
+            .bind(hash)
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await?;
+
+    Ok(MfaSetupInfo {
+        secret_base32,
+        qr_png_base64,
+        recovery_codes,
+    })
+}
+
+/// Confirm enrollment by validating a current TOTP from the pending secret.
+/// Returns `true` when the code matched and `mfa_enabled_at` is now set.
+pub(crate) async fn enable_mfa(
+    db: &SqlitePool,
+    user_id: i64,
+    totp_code: &str,
+) -> anyhow::Result<bool> {
+    let Some(secret) = load_mfa_secret(db, user_id).await? else {
+        return Ok(false);
+    };
+    if !check_totp(&secret, totp_code) {
+        return Ok(false);
+    }
+    sqlx::query("UPDATE users SET mfa_enabled_at = ? WHERE id = ?")
+        .bind(unix_now())
+        .bind(user_id)
+        .execute(db)
+        .await?;
+    Ok(true)
+}
+
+/// Login-time second-factor check. Accepts a 6-digit TOTP code or one of
+/// the user's unused recovery codes (marked used on success).
+pub(crate) async fn verify_mfa_challenge(
+    db: &SqlitePool,
+    user_id: i64,
+    code: &str,
+) -> anyhow::Result<bool> {
+    let code = code.trim();
+
+    if let Some(secret) = load_mfa_secret(db, user_id).await? {
+        if check_totp(&secret, code) {
+            return Ok(true);
+        }
+    }
+
+    consume_recovery_code(db, user_id, code).await
+}
+
+/// Fully turn off MFA: clear the secret, the enabled timestamp, and any
+/// recovery codes.
+pub(crate) async fn disable_mfa(db: &SqlitePool, user_id: i64) -> anyhow::Result<()> {
+    let mut tx = db.begin().await?;
+    sqlx::query("UPDATE users SET mfa_secret = NULL, mfa_enabled_at = NULL WHERE id = ?")
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("DELETE FROM mfa_recovery_codes WHERE user_id = ?")
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+/// Returns true iff the user has fully completed enrollment.
+pub(crate) async fn user_has_mfa(db: &SqlitePool, user_id: i64) -> anyhow::Result<bool> {
+    let row: Option<(Option<i64>,)> =
+        sqlx::query_as("SELECT mfa_enabled_at FROM users WHERE id = ?")
+            .bind(user_id)
+            .fetch_optional(db)
+            .await?;
+    Ok(row.and_then(|(t,)| t).is_some())
+}
+
+/// Used by the /account/mfa page to decide which actions to render.
+pub(crate) async fn mfa_status(db: &SqlitePool, user_id: i64) -> anyhow::Result<MfaStatus> {
+    let row: Option<(Option<String>, Option<i64>)> =
+        sqlx::query_as("SELECT mfa_secret, mfa_enabled_at FROM users WHERE id = ?")
+            .bind(user_id)
+            .fetch_optional(db)
+            .await?;
+    Ok(match row {
+        Some((Some(_), Some(_))) => MfaStatus::Enabled,
+        Some((Some(_), None)) => MfaStatus::Pending,
+        _ => MfaStatus::Disabled,
+    })
+}
+
+async fn load_mfa_secret(db: &SqlitePool, user_id: i64) -> anyhow::Result<Option<String>> {
+    let row: Option<(Option<String>,)> =
+        sqlx::query_as("SELECT mfa_secret FROM users WHERE id = ?")
+            .bind(user_id)
+            .fetch_optional(db)
+            .await?;
+    Ok(row.and_then(|(s,)| s))
+}
+
+fn check_totp(secret_base32: &str, code: &str) -> bool {
+    use totp_rs::{Algorithm, Secret, TOTP};
+    let Ok(bytes) = Secret::Encoded(secret_base32.to_string()).to_bytes() else {
+        return false;
+    };
+    let Ok(totp) = TOTP::new(Algorithm::SHA1, 6, 1, 30, bytes, None, "".to_string()) else {
+        return false;
+    };
+    totp.check_current(code).unwrap_or(false)
+}
+
+async fn consume_recovery_code(
+    db: &SqlitePool,
+    user_id: i64,
+    candidate: &str,
+) -> anyhow::Result<bool> {
+    use argon2::password_hash::{PasswordHash, PasswordVerifier};
+    use argon2::Argon2;
+
+    let rows: Vec<(String,)> = sqlx::query_as(
+        "SELECT code_hash FROM mfa_recovery_codes WHERE user_id = ? AND used_at IS NULL",
+    )
+    .bind(user_id)
+    .fetch_all(db)
+    .await?;
+
+    for (hash,) in rows {
+        if let Ok(parsed) = PasswordHash::new(&hash) {
+            if Argon2::default()
+                .verify_password(candidate.as_bytes(), &parsed)
+                .is_ok()
+            {
+                sqlx::query(
+                    "UPDATE mfa_recovery_codes SET used_at = ? \
+                     WHERE user_id = ? AND code_hash = ?",
+                )
+                .bind(unix_now())
+                .bind(user_id)
+                .bind(&hash)
+                .execute(db)
+                .await?;
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
+}
+
+fn generate_recovery_code<R: argon2::password_hash::rand_core::RngCore>(rng: &mut R) -> String {
+    // Crockford-style alphabet (no ambiguous chars). 10 chars × ~5 bits ≈ 50
+    // bits per code — plenty for one-time backups.
+    const ALPHABET: &[u8] = b"ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+    let mut bytes = [0u8; 10];
+    rng.fill_bytes(&mut bytes);
+    bytes
+        .iter()
+        .map(|b| ALPHABET[*b as usize % ALPHABET.len()] as char)
+        .collect()
+}
+
 /// Look up a still-unverified password account by email. Used by the
 /// "resend verification email" endpoint.
 pub(crate) async fn find_unverified_user_id(

@@ -94,6 +94,55 @@ html {
   color: var(--secondary-color-3);
 }
 
+.app-link {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 0.5rem;
+  font-size: 0.875rem;
+  color: var(--secondary-color-3);
+  text-decoration: underline;
+  text-underline-offset: 0.2rem;
+}
+
+.app-link:hover {
+  color: var(--secondary-color-1);
+}
+
+.mfa-artifacts {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.mfa-qr {
+  width: 12rem;
+  height: 12rem;
+  align-self: center;
+  background-color: white;
+  padding: 0.5rem;
+  border-radius: 0.5rem;
+}
+
+.mfa-recovery {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.75rem;
+  border-radius: 0.5rem;
+  background-color: var(--light, #fafafa) var(--dark, rgba(255, 255, 255, 0.05));
+  font-size: 0.875rem;
+}
+
+.mfa-recovery-list {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.25rem 0.75rem;
+  list-style: none;
+  padding: 0;
+  margin: 0.5rem 0 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
 .auth-error {
   padding: 0.5rem 0.75rem;
   border: 1px solid var(--light, #fca5a5) var(--dark, #7f1d1d);

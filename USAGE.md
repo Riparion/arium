@@ -83,6 +83,161 @@ registered provider automatically.
 ForgotPassword / ResetPassword / VerifyEmail pages, and the MFA setup
 flow.
 
+## Gating UI by permission
+
+`dx-auth` resolves the current user's permission tokens (direct grants
+plus role-inherited ones) and ships them to the client on the
+`UserProfile`. Rather than every component re-fetching, wrap your
+router once in `PermissionsProvider`; downstream code uses the hook or
+gate components against the shared resource.
+
+```rust
+use dx_auth::ui::{
+    PermissionsProvider, PermissionGate, RequirePermission, use_permissions,
+};
+
+fn app() -> Element {
+    rsx! {
+        PermissionsProvider {
+            Router::<Route> {}
+        }
+    }
+}
+```
+
+### Element-level pruning
+
+`PermissionGate` renders its children only when the check passes.
+Provide exactly one of `token`, `any_of`, or `all_of`:
+
+```rust
+PermissionGate {
+    token: "admin:users:read".to_string(),
+    AdminUsersLink {}
+}
+
+PermissionGate {
+    any_of: vec!["admin:users:read".into(), "admin:audit:read".into()],
+    AdminTabs {}
+}
+
+PermissionGate {
+    token: "admin:users:write".to_string(),
+    fallback: rsx! { p { "Read-only." } },
+    EditableUserRow {}
+}
+```
+
+### Route-level guard
+
+`RequirePermission` is the same check at route scope. While the
+profile is still loading it renders nothing (no content flash); when
+the check fails it calls `Navigator::replace(redirect_to)` so the
+denied page can't be back-buttoned into:
+
+```rust
+#[component]
+fn AdminUsersPage() -> Element {
+    rsx! {
+        RequirePermission {
+            token: "admin:users:read".to_string(),
+            redirect_to: "/".to_string(),
+            AdminUsersBody {}
+        }
+    }
+}
+```
+
+### Imperative checks via the hook
+
+`use_permissions()` returns a `Copy` handle for event handlers and
+imperative branches:
+
+```rust
+let perms = use_permissions();
+if perms.has("admin:users:read")        { /* … */ }
+if perms.any_of(["a", "b"])             { /* … */ }
+if perms.all_of(["a", "b"])             { /* … */ }
+perms.is_authenticated();
+perms.is_loading();
+perms.profile();           // Option<UserProfile> — full profile if loaded
+perms.refresh();           // re-fetch after a grant change
+```
+
+### Reusable policies
+
+When the same check appears in more than one place — typically the
+navigation entry to a section *and* the section's route guard — define
+it as a `Policy` so the call sites can't drift apart. A `Policy` is a
+small value type: combine tokens with `any_of` / `all_of` / `with`,
+optionally bind a scope, and pass to either gate component:
+
+```rust
+fn admin_policy() -> Policy {
+    Policy::any_of(["admin:users:read", "admin:audit:read"])
+}
+
+// Nav entry — pruned when none of the admin tokens are held.
+PermissionGate { policy: admin_policy(), AdminTabTrigger {} }
+
+// Route guard — same check, redirects on miss.
+RequirePermission { policy: admin_policy(), redirect_to: "/", AdminBody {} }
+
+// Imperative branch.
+if perms.check(&admin_policy()) { /* … */ }
+```
+
+Adding a new surface to the section is now a one-place edit: append the
+new token to the policy. Both call sites pick it up.
+
+Policies support a small tier-building shape with `.with(...)` and
+`.scoped(...)`:
+
+```rust
+fn project_viewer() -> Policy { Policy::token("read") }
+fn project_editor() -> Policy { project_viewer().with("write") }
+fn project_owner()  -> Policy { project_editor().with("admin") }
+
+PermissionGate {
+    policy: project_editor().scoped(format!("project:{project_id}")),
+    EditToolbar {}
+}
+```
+
+`Policy` is deliberately not a full boolean DSL — there's no
+`or`/`and`/`not` between policies. If your use case needs that today,
+construct the union of tokens by hand and revisit when a third pattern
+emerges.
+
+If `policy` is set on a gate, the inline `token` / `any_of` / `all_of`
+/ `scope` props are ignored.
+
+### Scoped tokens (inline form)
+
+For one-off checks that vary by resource (one record, one tenant, etc.),
+pass `scope` inline; the gate composes the final lookup as
+`"{scope}:{token}"`:
+
+```rust
+PermissionGate {
+    token: "write".to_string(),
+    scope: format!("project:{project_id}"),
+    EditToolbar {}
+}
+// checks the token "project:{id}:write"
+```
+
+The library treats `scope` as an opaque prefix — what it means is up
+to your app. Grant the matching tokens server-side via
+`user_permissions` (or your own scoped-grant table).
+
+### Live invalidation
+
+The profile resource is cached for the lifetime of the
+`PermissionsProvider`. After any action that changes the current
+user's grants, call `perms.refresh()` to re-fetch. Cross-tab /
+server-push invalidation is left to the app.
+
 ## Features
 
 `dx-auth` exposes the following Cargo features. The defaults give you
@@ -217,6 +372,8 @@ Apps can emit their own events too — call
 - Sign-in / sign-up / OAuth / verification / reset / MFA server fns.
 - `LoginPanel` UI component (drop in; takes a provider list + submit
   callback).
+- Client-side RBAC primitives — `PermissionsProvider`,
+  `use_permissions`, `PermissionGate`, `RequirePermission`.
 
 **Your app owns:**
 
@@ -250,6 +407,9 @@ Apps can emit their own events too — call
 │       ├── wire.rs                  LoginOutcome, UserProfile, ProviderInfo, etc.
 │       └── ui/
 │           ├── login_panel/         the reusable login card
+│           ├── permissions.rs       PermissionsProvider / Gate / Require / hook
+│           ├── account/             AccountSettings panel
+│           ├── admin/               AdminUserList / AdminUserDetail / AuditLog
 │           └── components/          catalog widgets (button, card, etc.)
 └── examples/basic/                  end-to-end fullstack consumer
 ```

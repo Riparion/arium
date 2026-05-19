@@ -16,11 +16,28 @@ use dx_auth::ui::components::card::{Card, CardContent, CardDescription, CardHead
 use dx_auth::ui::components::input::Input;
 use dx_auth::ui::components::label::Label;
 use dx_auth::ui::components::tabs::{TabContent, TabList, TabTrigger, Tabs};
-use dx_auth::ui::{LoginPanel, LoginProvider, LoginSubmit, SubmitKind};
+use dx_auth::ui::{
+    use_permissions, LoginPanel, LoginProvider, LoginSubmit, PermissionGate,
+    PermissionsProvider, Policy, RequirePermission, SubmitKind,
+};
 use dx_auth::{friendly_server_error, LoginOutcome, MfaSetupView, MfaStatusView, UserProfile};
 
 const THEME_CSS: Asset = asset!("/assets/dx-components-theme.css");
 const APP_CSS: Asset = asset!("/assets/app.css");
+
+/// Permission tokens guarding each tab inside `/admin`. Defined as
+/// constants so neither `admin_policy` nor the per-tab visibility checks
+/// inside `AdminPage` hard-code the strings independently.
+const TOKEN_ADMIN_USERS: &str = "admin:users:read";
+const TOKEN_ADMIN_AUDIT: &str = "admin:audit:read";
+
+/// Admission policy for `/admin`. Anyone with at least one admin-tab
+/// token is admitted; individual tabs further filter by their specific
+/// token. Adding a new admin tab is a one-place edit: add a const above,
+/// reference it here and in `AdminPage`.
+fn admin_policy() -> Policy {
+    Policy::any_of([TOKEN_ADMIN_USERS, TOKEN_ADMIN_AUDIT])
+}
 
 fn main() {
     #[cfg(not(feature = "server"))]
@@ -77,12 +94,8 @@ enum Route {
     MfaSetup,
     #[route("/account/settings")]
     AccountSettingsPage,
-    #[route("/admin/users")]
-    AdminUsersPage,
-    #[route("/admin/users/:user_id")]
-    AdminUserPage { user_id: i64 },
-    #[route("/admin/audit")]
-    AdminAuditPage,
+    #[route("/admin")]
+    AdminPage,
 }
 
 fn app() -> Element {
@@ -101,13 +114,15 @@ fn app() -> Element {
             Label { html_for: "__preload" }
         }
 
-        Router::<Route> {}
+        PermissionsProvider {
+            Router::<Route> {}
+        }
     }
 }
 
 #[component]
 fn Home() -> Element {
-    let mut profile = use_resource(get_current_user_profile);
+    let perms = use_permissions();
     let mut logout = use_action(logout);
 
     let providers_resource = use_resource(available_providers);
@@ -118,7 +133,7 @@ fn Home() -> Element {
         .map(LoginProvider::from)
         .collect();
 
-    let current: UserProfile = profile().and_then(|r| r.ok()).unwrap_or_default();
+    let current: UserProfile = perms.profile().unwrap_or_default();
     let logged_in = current.is_authenticated;
 
     let mut auth_error = use_signal(String::new);
@@ -135,7 +150,7 @@ fn Home() -> Element {
                 SubmitKind::SignUp => register_with_password(email, password).await,
             };
             match result {
-                Ok(LoginOutcome::LoggedIn) => profile.restart(),
+                Ok(LoginOutcome::LoggedIn) => perms.refresh(),
                 Ok(LoginOutcome::EmailUnverified) => pending_email.set(Some(email_for_pending)),
                 Ok(LoginOutcome::MfaRequired) => pending_mfa.set(true),
                 Err(e) => auth_error.set(friendly_server_error(e)),
@@ -147,8 +162,6 @@ fn Home() -> Element {
         main { class: "app-shell",
             if logged_in {
                 {
-                    let can_admin_users = current.has_permission("admin:users:read");
-                    let can_audit = current.has_permission("admin:audit:read");
                     let profile_for_tab = current.clone();
                     rsx! {
                         Tabs {
@@ -156,11 +169,17 @@ fn Home() -> Element {
                             TabList {
                                 TabTrigger { index: 0_usize, value: "account".to_string(), "Account" }
                                 TabTrigger { index: 1_usize, value: "mfa".to_string(),     "Two-factor auth" }
-                                if can_admin_users {
-                                    TabTrigger { index: 2_usize, value: "admin".to_string(),   "Users" }
-                                }
-                                if can_audit {
-                                    TabTrigger { index: 3_usize, value: "audit".to_string(),   "Audit log" }
+                                PermissionGate {
+                                    policy: admin_policy(),
+                                    // The TabTrigger primitive doesn't forward arbitrary
+                                    // attributes onto its inner button, so wrap it and let
+                                    // the click bubble into a navigation handler. The
+                                    // primitive's own click toggles tab state, but Home
+                                    // unmounts before that's visible.
+                                    span {
+                                        onclick: move |_| { navigator().push(Route::AdminPage); },
+                                        TabTrigger { index: 2_usize, value: "admin".to_string(), "Admin" }
+                                    }
                                 }
                             }
                             TabContent { index: 0_usize, value: "account".to_string(),
@@ -170,23 +189,13 @@ fn Home() -> Element {
                             TabContent { index: 1_usize, value: "mfa".to_string(),
                                 MfaSetup {}
                             }
-                            if can_admin_users {
-                                TabContent { index: 2_usize, value: "admin".to_string(),
-                                    AdminTabContent {}
-                                }
-                            }
-                            if can_audit {
-                                TabContent { index: 3_usize, value: "audit".to_string(),
-                                    dx_auth::ui::AuditLog {}
-                                }
-                            }
                         }
                         div { class: "app-actions-buttons",
                             Button {
                                 variant: ButtonVariant::Outline,
                                 onclick: move |_| async move {
                                     logout.call().await;
-                                    profile.restart();
+                                    perms.refresh();
                                 },
                                 "Sign out"
                             }
@@ -197,7 +206,7 @@ fn Home() -> Element {
                 MfaChallengeView {
                     on_logged_in: move |_| {
                         pending_mfa.set(false);
-                        profile.restart();
+                        perms.refresh();
                     },
                     on_cancel: move |_| {
                         pending_mfa.set(false);
@@ -881,62 +890,56 @@ fn AccountSettingsPage() -> Element {
     }
 }
 
+/// Admin console: its own route, its own tabset. The whole page is gated
+/// behind `any_of` so a user with either users:read OR audit:read can land
+/// here; individual tab triggers are then pruned to the specific permission
+/// each surface needs.
 #[component]
-fn AdminUsersPage() -> Element {
-    let nav = navigator();
-    rsx! {
-        main { class: "app-shell",
-            dx_auth::ui::AdminUserList {
-                on_select: move |id: i64| {
-                    nav.push(Route::AdminUserPage { user_id: id });
-                },
-            }
-            p { class: "auth-aux", a { href: "/", "← Back to home" } }
-        }
-    }
-}
+fn AdminPage() -> Element {
+    let perms = use_permissions();
+    let can_users = perms.has(TOKEN_ADMIN_USERS);
+    let can_audit = perms.has(TOKEN_ADMIN_AUDIT);
 
-#[component]
-fn AdminUserPage(user_id: i64) -> Element {
-    let nav = navigator();
-    rsx! {
-        main { class: "app-shell",
-            dx_auth::ui::AdminUserDetail {
-                user_id,
-                on_back: move |_| {
-                    nav.push(Route::AdminUsersPage);
-                },
-            }
-        }
-    }
-}
-
-#[component]
-fn AdminAuditPage() -> Element {
-    rsx! {
-        main { class: "app-shell",
-            dx_auth::ui::AuditLog {}
-            p { class: "auth-aux", a { href: "/", "← Back to home" } }
-        }
-    }
-}
-
-/// In-tab admin view. Keeps user-list/user-detail switching local to the
-/// Admin tab so clicking a row doesn't navigate the user away from the
-/// tabbed home page.
-#[component]
-fn AdminTabContent() -> Element {
     let mut selected = use_signal::<Option<i64>>(|| None);
 
+    let default_tab = if can_users { "users" } else { "audit" }.to_string();
+
     rsx! {
-        if let Some(uid) = selected() {
-            dx_auth::ui::AdminUserDetail {
-                user_id: uid,
-                on_back: move |_| selected.set(None),
-            }
-        } else {
-            dx_auth::ui::AdminUserList {
-                on_select: move |id: i64| selected.set(Some(id)),
+        RequirePermission {
+            policy: admin_policy(),
+            redirect_to: "/".to_string(),
+            main { class: "app-shell",
+                Tabs {
+                    default_value: default_tab,
+                    TabList {
+                        if can_users {
+                            TabTrigger { index: 0_usize, value: "users".to_string(), "Users" }
+                        }
+                        if can_audit {
+                            TabTrigger { index: 1_usize, value: "audit".to_string(), "Audit log" }
+                        }
+                    }
+                    if can_users {
+                        TabContent { index: 0_usize, value: "users".to_string(),
+                            if let Some(uid) = selected() {
+                                dx_auth::ui::AdminUserDetail {
+                                    user_id: uid,
+                                    on_back: move |_| selected.set(None),
+                                }
+                            } else {
+                                dx_auth::ui::AdminUserList {
+                                    on_select: move |id: i64| selected.set(Some(id)),
+                                }
+                            }
+                        }
+                    }
+                    if can_audit {
+                        TabContent { index: 1_usize, value: "audit".to_string(),
+                            dx_auth::ui::AuditLog {}
+                        }
+                    }
+                }
+                p { class: "auth-aux", a { href: "/", "← Back to home" } }
             }
         }
     }

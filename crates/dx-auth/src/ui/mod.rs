@@ -8,7 +8,12 @@ pub mod login_panel;
 
 pub mod account;
 pub mod admin;
+pub mod permissions;
 
 pub use account::AccountSettings;
 pub use admin::{AdminUserDetail, AdminUserList, AuditLog};
 pub use login_panel::{LoginPanel, LoginProvider, LoginSubmit, SubmitKind};
+pub use permissions::{
+    use_permissions, PermissionGate, PermissionSet, PermissionsProvider, Policy,
+    RequirePermission, UsePermissions,
+};

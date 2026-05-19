@@ -54,8 +54,14 @@ impl Authentication<User, i64, Pool> for User {
         .await
         .unwrap();
 
+        // Merge tokens from direct user_permissions rows AND tokens inherited
+        // from any role the user has been assigned. The UNION dedupes.
         let sql_user_perms = sqlx::query_as::<_, SqlPermissionTokens>(
-            "SELECT token FROM user_permissions WHERE user_id = $1;",
+            "SELECT token FROM user_permissions WHERE user_id = $1 \
+             UNION \
+             SELECT rp.token FROM role_permissions rp \
+             JOIN user_roles ur ON ur.role_id = rp.role_id \
+             WHERE ur.user_id = $1",
         )
         .bind(userid)
         .fetch_all(db)
@@ -268,24 +274,154 @@ pub async fn upsert_github_user(
     .execute(db)
     .await?;
 
-    seed_default_permissions(db, user_id).await?;
+    assign_default_role(db, user_id).await?;
 
     Ok(user_id)
 }
 
-/// Grant the baseline permissions every newly-created account starts with.
-/// Phase 3's `create_password_user` should also call this.
-pub async fn seed_default_permissions(
-    db: &Pool,
-    user_id: i64,
-) -> anyhow::Result<()> {
+/// Canonical role ids — match the seed in migration 0005.
+pub mod role {
+    /// Full administrative access.
+    pub const ADMIN: i64 = 1;
+    /// Standard signed-in user.
+    pub const MEMBER: i64 = 2;
+    /// Anonymous / not signed in.
+    pub const GUEST: i64 = 3;
+}
+
+/// Grant the baseline role every newly-created (non-anonymous) account gets.
+/// Called from `create_password_user` and `upsert_github_user` on the
+/// new-user branch. Apps that want a different starter role can call
+/// `grant_role` after the user is created (or directly INSERT to
+/// `user_roles`).
+pub async fn assign_default_role(db: &Pool, user_id: i64) -> anyhow::Result<()> {
+    grant_role(db, user_id, role::MEMBER).await
+}
+
+/// Grant a role to a user. No-op if already assigned.
+pub async fn grant_role(db: &Pool, user_id: i64, role_id: i64) -> anyhow::Result<()> {
     sqlx::query(
-        "INSERT INTO user_permissions (user_id, token) VALUES ($1, 'Category::View') \
-         ON CONFLICT DO NOTHING",
+        "INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2) \
+         ON CONFLICT (user_id, role_id) DO NOTHING",
     )
     .bind(user_id)
+    .bind(role_id)
     .execute(db)
     .await?;
+    Ok(())
+}
+
+/// Revoke a role from a user. No-op if they didn't have it.
+pub async fn revoke_role(db: &Pool, user_id: i64, role_id: i64) -> anyhow::Result<()> {
+    sqlx::query("DELETE FROM user_roles WHERE user_id = $1 AND role_id = $2")
+        .bind(user_id)
+        .bind(role_id)
+        .execute(db)
+        .await?;
+    Ok(())
+}
+
+/// Replace a user's full set of roles with the supplied list (single
+/// transaction so observers never see a half-applied state).
+pub async fn set_user_roles(
+    db: &Pool,
+    user_id: i64,
+    role_ids: &[i64],
+) -> anyhow::Result<()> {
+    let mut tx = db.begin().await?;
+    sqlx::query("DELETE FROM user_roles WHERE user_id = $1")
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await?;
+    for &rid in role_ids {
+        sqlx::query("INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2)")
+            .bind(user_id)
+            .bind(rid)
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await?;
+    Ok(())
+}
+
+#[derive(Debug, Clone, sqlx::FromRow, Serialize, Deserialize, PartialEq)]
+pub struct RoleRow {
+    pub id: i64,
+    pub name: String,
+    pub description: Option<String>,
+    pub is_system: bool,
+}
+
+/// All roles in the system, ordered by id (system roles first).
+pub async fn list_roles(db: &Pool) -> anyhow::Result<Vec<RoleRow>> {
+    let rows = sqlx::query_as::<_, RoleRow>(
+        "SELECT id, name, description, is_system FROM roles ORDER BY id",
+    )
+    .fetch_all(db)
+    .await?;
+    Ok(rows)
+}
+
+/// Role ids attached to the given user.
+pub async fn get_user_role_ids(db: &Pool, user_id: i64) -> anyhow::Result<Vec<i64>> {
+    let rows: Vec<(i64,)> =
+        sqlx::query_as("SELECT role_id FROM user_roles WHERE user_id = $1 ORDER BY role_id")
+            .bind(user_id)
+            .fetch_all(db)
+            .await?;
+    Ok(rows.into_iter().map(|(r,)| r).collect())
+}
+
+/// Soft-delete: NULL out PII, set `deleted_at`, revoke all roles, and
+/// disconnect from oauth providers. The row stays so foreign keys
+/// (app-owned tables that point at users.id) don't break.
+pub async fn soft_delete_user(db: &Pool, user_id: i64) -> anyhow::Result<()> {
+    let mut tx = db.begin().await?;
+    sqlx::query(
+        "UPDATE users SET \
+            display_name = NULL, \
+            name = NULL, \
+            email = NULL, \
+            avatar_url = NULL, \
+            html_url = NULL, \
+            password_hash = NULL, \
+            mfa_secret = NULL, \
+            mfa_enabled_at = NULL, \
+            email_verified_at = NULL, \
+            deleted_at = $1 \
+         WHERE id = $2 AND deleted_at IS NULL",
+    )
+    .bind(unix_now())
+    .bind(user_id)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query("DELETE FROM user_roles WHERE user_id = $1")
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("DELETE FROM oauth_accounts WHERE user_id = $1")
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("DELETE FROM user_permissions WHERE user_id = $1")
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+/// Change a user's self-chosen display name. Pass `None` to clear it.
+pub async fn update_display_name(
+    db: &Pool,
+    user_id: i64,
+    new_name: Option<&str>,
+) -> anyhow::Result<()> {
+    sqlx::query("UPDATE users SET display_name = $1 WHERE id = $2")
+        .bind(new_name)
+        .bind(user_id)
+        .execute(db)
+        .await?;
     Ok(())
 }
 
@@ -336,7 +472,7 @@ pub async fn create_password_user(
         Err(e) => return Err(e.into()),
     };
 
-    seed_default_permissions(db, user_id).await?;
+    assign_default_role(db, user_id).await?;
     Ok(user_id)
 }
 

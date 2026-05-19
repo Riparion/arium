@@ -118,7 +118,34 @@ fn main() {
             router = router.merge(oauth_router);
         }
 
+        // Per-IP rate limit on the whole app. Tuned so normal page loads
+        // (handful of server-fn calls + assets) breeze through, but
+        // sustained brute-force on /api/user/login-password slows hard:
+        // burst of 30 requests, then 1 req/sec replenishment per IP.
+        // Combined with Argon2 password verification (~100ms/attempt) this
+        // is plenty for an example app; a real deployment would also want
+        // path-aware tighter limits on the auth endpoints specifically.
+        let governor_config = std::sync::Arc::new(
+            tower_governor::governor::GovernorConfigBuilder::default()
+                .per_second(1)
+                .burst_size(30)
+                .finish()
+                .expect("valid governor config"),
+        );
+        // Periodically prune stale per-IP buckets so the in-memory table
+        // doesn't grow without bound.
+        {
+            let limiter = governor_config.limiter().clone();
+            tokio::spawn(async move {
+                loop {
+                    tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                    limiter.retain_recent();
+                }
+            });
+        }
+
         Ok(router
+            .layer(tower_governor::GovernorLayer::new(governor_config))
             // Make the SqlitePool reachable from server fns via `axum::Extension`.
             .layer(axum::Extension(db.clone()))
             .layer(axum::Extension(mailer.clone()))
@@ -559,6 +586,12 @@ fn provider_descriptor(id: ProviderId) -> LoginProvider {
 /// CapturedError reconstructs from the wire-transported string.
 fn friendly_server_error(e: dioxus::CapturedError) -> String {
     let raw = e.to_string();
+    // Rate-limit responses come straight from tower_governor as plain
+    // `HTTP 429 Too Many Requests`; the server-fn client surfaces them via
+    // various wrappers, so match on either token.
+    if raw.contains("429") || raw.contains("Too Many Requests") {
+        return "Too many attempts. Wait a minute and try again.".to_string();
+    }
     let rest = raw.strip_prefix("error running server function: ").unwrap_or(&raw);
     let cleaned = rest.rsplit_once(" (details:").map(|(m, _)| m).unwrap_or(rest);
     cleaned.to_string()

@@ -72,10 +72,8 @@ const SKELETON_CSS: Asset = asset!(
     "/src/ui/components/skeleton/dx-skeleton.css",
     AssetOptions::css_module()
 );
-const VIRTUAL_LIST_CSS: Asset = asset!(
-    "/src/ui/components/virtual_list/style.css",
-    AssetOptions::css_module()
-);
+// virtual_list ships only inline styles — its style.css is comment-only,
+// which manganis's css_module parser refuses. Nothing to pin here.
 const LOGIN_PANEL_CSS: Asset = asset!(
     "/src/ui/login_panel/style.css",
     AssetOptions::css_module()
@@ -117,7 +115,6 @@ pub fn AuthStylesheets() -> Element {
         document::Stylesheet { href: BADGE_CSS }
         document::Stylesheet { href: AVATAR_CSS }
         document::Stylesheet { href: SKELETON_CSS }
-        document::Stylesheet { href: VIRTUAL_LIST_CSS }
         document::Stylesheet { href: LOGIN_PANEL_CSS }
         document::Stylesheet { href: VERIFY_EMAIL_CSS }
         {

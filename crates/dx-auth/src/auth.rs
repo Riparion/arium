@@ -914,6 +914,18 @@ pub async fn consume_verification_token(
     Ok(Some(user_id))
 }
 
+/// Mark a user's email as verified without going through the token flow.
+/// Used by the env-var bypass at signup; also handy for tests and
+/// admin-driven approvals.
+pub async fn mark_email_verified(db: &Pool, user_id: i64) -> anyhow::Result<()> {
+    sqlx::query("UPDATE users SET email_verified_at = $1 WHERE id = $2")
+        .bind(unix_now())
+        .bind(user_id)
+        .execute(db)
+        .await?;
+    Ok(())
+}
+
 // =============== TOTP MFA ==================
 
 #[cfg(feature = "mfa")]

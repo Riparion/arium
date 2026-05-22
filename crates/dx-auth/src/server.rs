@@ -199,10 +199,39 @@ pub async fn available_providers() -> Result<Vec<ProviderInfo>> {
 /// verification email and isn't logged in until they confirm; without `mail`
 /// the new account is marked verified immediately (no email infrastructure
 /// available) and the caller can sign in straight away.
+///
+/// Setting `DX_AUTH_SKIP_EMAIL_VERIFICATION=1` (also accepts `true`/`yes`/`on`)
+/// on the server short-circuits the round-trip even when `mail` is compiled
+/// in: the account is marked verified at creation, the user is logged in, and
+/// no verification email is sent. Intended for local development and tests.
 #[cfg(feature = "mail")]
-#[post("/api/user/register-password", db: DbExtension, mail: MailExtension, audit: AuditCtx)]
+#[post(
+    "/api/user/register-password",
+    auth: auth::Session,
+    db: DbExtension,
+    mail: MailExtension,
+    session: SessionStore,
+    audit: AuditCtx,
+)]
 pub async fn register_with_password(email: String, password: String) -> Result<LoginOutcome> {
     let user_id = auth::create_password_user(&db.0, &email, &password).await?;
+
+    if skip_email_verification() {
+        auth::mark_email_verified(&db.0, user_id).await?;
+        audit
+            .record(
+                &db.0,
+                auth::audit::USER_SIGNUP,
+                Some(user_id),
+                Some(user_id),
+                Some("{\"method\":\"password\",\"auto_verified\":true}"),
+            )
+            .await;
+        session.set_longterm(false);
+        auth.login_user(user_id);
+        return Ok(LoginOutcome::LoggedIn);
+    }
+
     audit
         .record(
             &db.0,
@@ -214,6 +243,19 @@ pub async fn register_with_password(email: String, password: String) -> Result<L
         .await;
     send_verification_email(&db.0, &mail.0, user_id, &email).await;
     Ok(LoginOutcome::EmailUnverified)
+}
+
+/// Truthy-parse `DX_AUTH_SKIP_EMAIL_VERIFICATION`. Accepts `1`, `true`,
+/// `yes`, `on` (case-insensitive); anything else (including unset) is false.
+#[cfg(feature = "server")]
+fn skip_email_verification() -> bool {
+    match std::env::var("DX_AUTH_SKIP_EMAIL_VERIFICATION") {
+        Ok(v) => matches!(
+            v.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        ),
+        Err(_) => false,
+    }
 }
 
 #[cfg(not(feature = "mail"))]

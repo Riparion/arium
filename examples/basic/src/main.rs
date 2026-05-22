@@ -53,10 +53,10 @@ fn main() {
             .max_connections(20)
             .connect_with("sqlite://./auth.db?mode=rwc".parse()?)
             .await?;
-        // The example's migrations dir contains both dx-auth's bundled SQL
-        // (copied from crates/dx-auth/migrations/sqlite/) and any
-        // app-specific ones (none yet).
-        sqlx::migrate!().run(&pool).await?;
+        // dx-auth owns the schema for `users`, `oauth_accounts`, `roles`,
+        // `audit_events`, `api_keys`, ... — they're embedded in the dx-auth
+        // crate. App-specific migrations (none yet) would run after this.
+        dx_auth::MIGRATOR.run(&pool).await?;
 
         let mailer = dx_auth::Mailer::from_env()?;
         println!("[startup] mailer backend: {}", mailer.describe());

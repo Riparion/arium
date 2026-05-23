@@ -175,12 +175,13 @@ pub async fn upsert_oauth_user(
     .await?;
 
     if let Some((user_id,)) = existing {
+        // Refresh provider-owned fields only. `username` is the user's stable
+        // handle (assigned once — a rename on the provider must not silently
+        // change it), and `display_name` is user-editable (refreshing it would
+        // clobber a name the user chose in account settings).
         sqlx::query(
-            "UPDATE users SET username = $1, name = $2, email = $3, avatar_url = $4, html_url = $5 \
-             WHERE id = $6",
+            "UPDATE users SET email = $1, avatar_url = $2, html_url = $3 WHERE id = $4",
         )
-        .bind(&profile.login)
-        .bind(profile.name.as_deref())
         .bind(profile.email.as_deref())
         .bind(profile.avatar_url.as_deref())
         .bind(profile.html_url.as_deref())
@@ -209,26 +210,36 @@ pub async fn upsert_oauth_user(
             .execute(db)
             .await?;
 
-            sqlx::query("UPDATE users SET name = $1, avatar_url = $2, html_url = $3 WHERE id = $4")
-                .bind(profile.name.as_deref())
-                .bind(profile.avatar_url.as_deref())
-                .bind(profile.html_url.as_deref())
-                .bind(user_id)
-                .execute(db)
-                .await?;
+            // Refresh provider-owned display fields. Seed `display_name` from
+            // the provider only when the linked account doesn't already have
+            // one (COALESCE keeps a name the user chose); preserve `username`,
+            // `email`, and `password_hash` so password sign-in keeps working.
+            sqlx::query(
+                "UPDATE users SET display_name = COALESCE(display_name, $1), \
+                 avatar_url = $2, html_url = $3 WHERE id = $4",
+            )
+            .bind(profile.name.as_deref())
+            .bind(profile.avatar_url.as_deref())
+            .bind(profile.html_url.as_deref())
+            .bind(user_id)
+            .execute(db)
+            .await?;
 
             return Ok(user_id);
         }
     }
 
-    // 3) Brand-new user. The provider already verified the address (or didn't
-    //    return one), so we mark `email_verified_at` now to skip the
-    //    verification email flow.
+    // 3) Brand-new user. Allocate a unique handle from the provider login
+    //    (collision-suffixed) and seed the editable `display_name` from the
+    //    provider's reported name. The provider already verified the address
+    //    (or didn't return one), so we mark `email_verified_at` now to skip
+    //    the verification email flow.
+    let username = crate::auth::unique_username(db, &profile.login).await?;
     let (user_id,): (i64,) = sqlx::query_as(
-        "INSERT INTO users (anonymous, username, name, email, avatar_url, html_url, email_verified_at) \
+        "INSERT INTO users (anonymous, username, display_name, email, avatar_url, html_url, email_verified_at) \
          VALUES (false, $1, $2, $3, $4, $5, $6) RETURNING id",
     )
-    .bind(&profile.login)
+    .bind(&username)
     .bind(profile.name.as_deref())
     .bind(profile.email.as_deref())
     .bind(profile.avatar_url.as_deref())

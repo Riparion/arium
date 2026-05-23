@@ -258,10 +258,9 @@ fn Home() -> Element {
 
 #[component]
 fn ProfileCard(profile: UserProfile) -> Element {
-    let display_name = profile
-        .name
-        .clone()
-        .unwrap_or_else(|| profile.username.clone());
+    // `display()` resolves the chosen display name, falling back to the
+    // @username handle — call it instead of poking at the fields directly.
+    let display_name = profile.display().to_string();
     let handle = profile.username.clone();
     let avatar_url = profile.avatar_url.clone();
     let email = profile.email.clone();

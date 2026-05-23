@@ -107,7 +107,7 @@ pub async fn get_current_user_profile() -> Result<UserProfile> {
     Ok(UserProfile {
         is_authenticated: !user.anonymous,
         username: user.username,
-        name: user.name,
+        display_name: user.display_name,
         email: user.email,
         avatar_url: user.avatar_url,
         html_url: user.html_url,
@@ -748,13 +748,11 @@ pub async fn admin_get_user(user_id: i64) -> Result<Option<AdminUserDetail>> {
         return Ok(None);
     };
     let permissions = auth::list_permissions_for_user(&db.0, user_id).await?;
-    let name = row.name.clone();
     let avatar_url = row.avatar_url.clone();
     let html_url = row.html_url.clone();
     let summary = summarise_admin_user(&db.0, row).await?;
     Ok(Some(AdminUserDetail {
         summary,
-        name,
         avatar_url,
         html_url,
         permissions,
@@ -949,7 +947,7 @@ pub async fn get_account_view() -> Result<AccountView> {
 
     Ok(AccountView {
         username: user.username.clone(),
-        display_name: None, // populated below
+        display_name: user.display_name.clone(),
         email: user.email.clone(),
         email_verified: true, // user is currently signed in, so they verified at some point
         mfa_enabled,

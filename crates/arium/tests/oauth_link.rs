@@ -28,14 +28,14 @@ fn profile(provider_user_id: &str, login: &str, email: Option<&str>) -> Normaliz
 // ============================================================
 
 #[tokio::test]
-async fn repeat_login_returns_same_user_and_refreshes_profile_fields() {
+async fn repeat_login_returns_same_user_and_refreshes_provider_fields_only() {
     let pool = common::pool().await;
 
     let first = profile("ext-1", "octocat", Some("octo@example.com"));
     let user_id = upsert_oauth_user(&pool, "github", first).await.unwrap();
 
-    // Second login: same external id, but the provider returned a new display
-    // name + avatar (a rename or avatar swap).
+    // Second login: same external id, but the provider returned a new login
+    // (a rename), a new display name, and a new avatar.
     let updated = NormalizedProfile {
         name: Some("Octo Cat the Second".to_string()),
         avatar_url: Some("https://example.invalid/new.png".to_string()),
@@ -46,13 +46,18 @@ async fn repeat_login_returns_same_user_and_refreshes_profile_fields() {
     assert_eq!(again, user_id, "repeat login must return the same user id");
 
     let row: (String, Option<String>, Option<String>) =
-        sqlx::query_as("SELECT username, name, avatar_url FROM users WHERE id = $1")
+        sqlx::query_as("SELECT username, display_name, avatar_url FROM users WHERE id = $1")
             .bind(user_id)
             .fetch_one(&pool)
             .await
             .unwrap();
-    assert_eq!(row.0, "octocat-renamed");
-    assert_eq!(row.1.as_deref(), Some("Octo Cat the Second"));
+    // The handle is assigned once and stays stable across re-login: a rename
+    // on the provider must NOT silently change the local @username.
+    assert_eq!(row.0, "octocat", "username is stable across re-login");
+    // display_name is user-editable, so re-login does NOT overwrite it — it
+    // keeps the value seeded at first signup.
+    assert_eq!(row.1.as_deref(), Some("octocat (display)"));
+    // Provider-owned fields (avatar/email/html_url) ARE refreshed.
     assert_eq!(row.2.as_deref(), Some("https://example.invalid/new.png"));
 }
 
@@ -91,7 +96,7 @@ async fn email_match_links_to_existing_password_account_without_clobbering_hash(
     let post_hash = auth::get_password_hash(&pool, existing_id).await.unwrap();
     assert_eq!(pre_hash, post_hash, "must preserve password hash on link");
 
-    // Username preserved (the linking branch only refreshes display fields).
+    // Username preserved (the linking branch never touches the local handle).
     let post_username: String = sqlx::query_scalar("SELECT username FROM users WHERE id = $1")
         .bind(existing_id)
         .fetch_one(&pool)
@@ -99,13 +104,15 @@ async fn email_match_links_to_existing_password_account_without_clobbering_hash(
         .unwrap();
     assert_eq!(pre_username, post_username);
 
-    // Display fields ARE refreshed from the provider profile.
-    let name: Option<String> = sqlx::query_scalar("SELECT name FROM users WHERE id = $1")
-        .bind(existing_id)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    assert_eq!(name.as_deref(), Some("alice-on-gh (display)"));
+    // The password account had no display_name, so linking seeds it from the
+    // provider's reported name (COALESCE — it would NOT clobber an existing one).
+    let display_name: Option<String> =
+        sqlx::query_scalar("SELECT display_name FROM users WHERE id = $1")
+            .bind(existing_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(display_name.as_deref(), Some("alice-on-gh (display)"));
 }
 
 #[tokio::test]

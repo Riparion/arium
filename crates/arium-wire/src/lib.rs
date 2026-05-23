@@ -43,10 +43,12 @@ pub struct UserProfile {
     /// `false` for the anonymous Guest user, `true` once a real account is
     /// attached to the session.
     pub is_authenticated: bool,
-    /// Local username (email for password accounts, provider handle for OAuth).
+    /// Unique, stable `@handle` (provider login for OAuth, email local-part
+    /// for password accounts). Shown for disambiguation; never used as a key.
     pub username: String,
-    /// Optional human-readable display name.
-    pub name: Option<String>,
+    /// User-editable display name, seeded from the OAuth provider at signup.
+    /// May be empty — prefer [`UserProfile::display`] for rendering.
+    pub display_name: Option<String>,
     /// Email on file, if any.
     pub email: Option<String>,
     /// Avatar URL pulled from the OAuth provider, when available.
@@ -62,6 +64,18 @@ impl UserProfile {
     /// Returns `true` if `token` is one of the permissions on this profile.
     pub fn has_permission(&self, token: &str) -> bool {
         self.permissions.iter().any(|p| p == token)
+    }
+
+    /// Best label to show in the UI: the chosen `display_name`, falling back to
+    /// the `@username` handle when it's unset or blank. Call this everywhere a
+    /// user's name is rendered so the precedence stays consistent — don't reach
+    /// for `display_name`/`username` directly.
+    pub fn display(&self) -> &str {
+        self.display_name
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or(&self.username)
     }
 }
 
@@ -134,9 +148,9 @@ pub struct CreateApiTokenResponse {
 pub struct AdminUserSummary {
     /// Database row id.
     pub id: i64,
-    /// Local username (email for password accounts, provider handle otherwise).
+    /// Unique `@handle`.
     pub username: String,
-    /// User-chosen display name.
+    /// Display name (seeded from the OAuth provider, user-editable), if any.
     pub display_name: Option<String>,
     /// Email on file, if any.
     pub email: Option<String>,
@@ -155,11 +169,8 @@ pub struct AdminUserSummary {
 /// Full admin view of a single user, returned by the detail endpoint.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct AdminUserDetail {
-    /// List-view fields (id, username, flags, role ids).
+    /// List-view fields (id, username, display_name, flags, role ids).
     pub summary: AdminUserSummary,
-    /// Display name pulled from the OAuth provider (separate from
-    /// `summary.display_name`, which is user-chosen).
-    pub name: Option<String>,
     /// Avatar URL pulled from the OAuth provider, when available.
     pub avatar_url: Option<String>,
     /// Public profile URL on the OAuth provider, when available.
@@ -242,9 +253,9 @@ pub struct AuditQuery {
 /// The current user's full account view (used by the AccountSettings UI).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct AccountView {
-    /// Local username (email for password accounts, provider handle otherwise).
+    /// Unique `@handle`.
     pub username: String,
-    /// User-chosen display name.
+    /// Display name (seeded from the OAuth provider, user-editable), if any.
     pub display_name: Option<String>,
     /// Email on file, if any.
     pub email: Option<String>,

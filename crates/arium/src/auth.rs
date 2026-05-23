@@ -26,10 +26,13 @@ pub struct User {
     pub id: i32,
     /// `true` for the built-in Guest user.
     pub anonymous: bool,
-    /// Local username (email for password accounts, provider handle otherwise).
+    /// Unique, stable `@handle`: the provider login for OAuth accounts, the
+    /// email local-part for password accounts (collision-suffixed at signup).
+    /// Apps key on `id`, never on this — see [`unique_username`].
     pub username: String,
-    /// Display name from the OAuth provider, if any.
-    pub name: Option<String>,
+    /// User-editable display name, seeded from the OAuth provider's name at
+    /// signup. Prefer this over `username` for UI; fall back to `username`.
+    pub display_name: Option<String>,
     /// Email on file, if any.
     pub email: Option<String>,
     /// Avatar URL from the OAuth provider, when available.
@@ -57,14 +60,14 @@ impl Authentication<User, i64, Pool> for User {
             id: i32,
             anonymous: bool,
             username: String,
-            name: Option<String>,
+            display_name: Option<String>,
             email: Option<String>,
             avatar_url: Option<String>,
             html_url: Option<String>,
         }
 
         let sqluser = sqlx::query_as::<_, SqlUser>(
-            "SELECT id, anonymous, username, name, email, avatar_url, html_url \
+            "SELECT id, anonymous, username, display_name, email, avatar_url, html_url \
              FROM users WHERE id = $1",
         )
         .bind(userid)
@@ -88,7 +91,7 @@ impl Authentication<User, i64, Pool> for User {
             id: sqluser.id,
             anonymous: sqluser.anonymous,
             username: sqluser.username,
-            name: sqluser.name,
+            display_name: sqluser.display_name,
             email: sqluser.email,
             avatar_url: sqluser.avatar_url,
             html_url: sqluser.html_url,
@@ -461,7 +464,6 @@ pub async fn soft_delete_user(db: &Pool, user_id: i64) -> anyhow::Result<()> {
     sqlx::query(
         "UPDATE users SET \
             display_name = NULL, \
-            name = NULL, \
             email = NULL, \
             avatar_url = NULL, \
             html_url = NULL, \
@@ -514,9 +516,9 @@ pub async fn update_display_name(
 pub struct AdminUserRow {
     /// Database row id.
     pub id: i64,
-    /// Local username.
+    /// Unique `@handle`.
     pub username: String,
-    /// User-chosen display name, if any.
+    /// Display name (seeded from the OAuth provider, user-editable), if any.
     pub display_name: Option<String>,
     /// Email on file, if any.
     pub email: Option<String>,
@@ -528,8 +530,6 @@ pub struct AdminUserRow {
     pub anonymous: bool,
     /// Unix seconds when the account was soft-deleted, or `None` if active.
     pub deleted_at: Option<i64>,
-    /// Display name pulled from the OAuth provider.
-    pub name: Option<String>,
     /// Avatar URL from the OAuth provider, when available.
     pub avatar_url: Option<String>,
     /// Public profile URL on the OAuth provider, when available.
@@ -546,7 +546,7 @@ pub async fn list_users_for_admin(
 ) -> anyhow::Result<Vec<AdminUserRow>> {
     let rows = sqlx::query_as::<_, AdminUserRow>(
         "SELECT id, username, display_name, email, email_verified_at, \
-                mfa_enabled_at, anonymous, deleted_at, name, avatar_url, html_url \
+                mfa_enabled_at, anonymous, deleted_at, avatar_url, html_url \
          FROM users \
          ORDER BY id \
          LIMIT $1 OFFSET $2",
@@ -562,7 +562,7 @@ pub async fn list_users_for_admin(
 pub async fn get_user_for_admin(db: &Pool, user_id: i64) -> anyhow::Result<Option<AdminUserRow>> {
     let row = sqlx::query_as::<_, AdminUserRow>(
         "SELECT id, username, display_name, email, email_verified_at, \
-                mfa_enabled_at, anonymous, deleted_at, name, avatar_url, html_url \
+                mfa_enabled_at, anonymous, deleted_at, avatar_url, html_url \
          FROM users WHERE id = $1",
     )
     .bind(user_id)
@@ -654,6 +654,45 @@ pub async fn linked_oauth_providers(db: &Pool, user_id: i64) -> anyhow::Result<V
     Ok(rows.into_iter().map(|(p,)| p).collect())
 }
 
+/// Allocate a unique, case-insensitive `@username` handle from a desired base,
+/// appending a numeric suffix when the bare handle is already taken
+/// (`alice`, `alice2`, `alice3`, …). Empty/blank input falls back to `user`.
+///
+/// `username` is the user's public handle: unique and assigned once at account
+/// creation. Apps key on `users.id`, never on this. There is a tiny
+/// check-then-insert race (two concurrent signups picking the same handle); the
+/// `ux_users_username_lower` unique index is the hard backstop, and the same
+/// benign-race tolerance the first-admin grant relies on applies here.
+pub async fn unique_username(db: &Pool, desired: &str) -> anyhow::Result<String> {
+    let base = {
+        let trimmed = desired.trim();
+        if trimmed.is_empty() {
+            "user".to_string()
+        } else {
+            trimmed.to_string()
+        }
+    };
+
+    let mut candidate = base.clone();
+    let mut n: u32 = 1;
+    loop {
+        let taken: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM users WHERE LOWER(username) = LOWER($1))",
+        )
+        .bind(&candidate)
+        .fetch_one(db)
+        .await?;
+        if !taken {
+            return Ok(candidate);
+        }
+        n = n.saturating_add(1);
+        if n > 10_000 {
+            anyhow::bail!("could not allocate a unique username for {base:?}");
+        }
+        candidate = format!("{base}{n}");
+    }
+}
+
 /// Create a new email/password account.
 ///
 /// Returns the new user's id on success. The error is a user-facing message
@@ -677,7 +716,8 @@ pub async fn create_password_user(db: &Pool, email: &str, password: &str) -> any
         .map_err(|e| anyhow::anyhow!("hashing failed: {e}"))?
         .to_string();
 
-    let username = email.split('@').next().unwrap_or(email);
+    let desired = email.split('@').next().unwrap_or(email);
+    let username = unique_username(db, desired).await?;
 
     let inserted: Result<(i64,), sqlx::Error> = sqlx::query_as(
         "INSERT INTO users (anonymous, username, email, password_hash) \

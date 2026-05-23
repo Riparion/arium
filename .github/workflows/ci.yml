@@ -121,10 +121,11 @@ jobs:
       - run: cargo audit
 
   # License / source / bans policy enforcement. Configured in deny.toml.
+  # Gating: deny.toml is curated; a failure here means a new transitive
+  # introduced a license / source we haven't reviewed.
   deny:
-    name: cargo deny (advisory)
+    name: cargo deny
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: EmbarkStudios/cargo-deny-action@v2
@@ -143,10 +144,11 @@ jobs:
 
   # Secret scan on the diff for every PR, and full repo on push to main.
   # Free for personal/public repos; orgs need a GITLEAKS_LICENSE secret.
+  # Gating: a hit here means a credential is about to land in git
+  # history — that's worth blocking the merge to investigate.
   secrets:
-    name: gitleaks (advisory)
+    name: gitleaks
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
         with:

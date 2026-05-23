@@ -3,6 +3,7 @@ name = "fullstack-auth-example"
 version = "0.1.0"
 edition = "2024"
 publish = false
+license = "MIT OR Apache-2.0"
 
 [dependencies]
 dioxus = { version = "0.7.9", features = ["fullstack", "router"] }

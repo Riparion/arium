@@ -4,6 +4,9 @@ version = "0.1.0"
 edition = "2024"
 publish = false
 description = "Reusable authentication library for Dioxus 0.7 fullstack apps."
+license = "MIT OR Apache-2.0"
+authors = ["Tony Bierman <tonybierman@gmail.com>"]
+repository = "https://github.com/tonybierman/dx-auth"
 
 [lib]
 path = "src/lib.rs"

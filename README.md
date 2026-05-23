@@ -18,6 +18,16 @@ fullstack apps. Provides:
 - "Remember me" long-lived sessions.
 - A drop-in `LoginPanel` UI component built on the Dioxus components
   catalog.
+- Role-based access control — system `ADMIN` / `USER` roles plus
+  user-defined roles, scoped permission tokens, and a
+  `BOOTSTRAP_ADMIN_EMAIL` env var that auto-promotes the first matching
+  signup.
+- Append-only audit log of authentication and admin events
+  (`audit_events` table) with a built-in viewer screen.
+- Admin UI screens for managing users, roles, and permission
+  assignments.
+- Account self-service screens (display name, password change, delete
+  account) plus a standalone email-verification screen.
 
 See [USAGE.md](USAGE.md) for getting started, features, environment
 variables, audit log, repo layout, and dev tips.

@@ -29,10 +29,10 @@ pub use auth_stylesheets::AuthStylesheets;
 #[cfg(feature = "mail")]
 pub use forgot_password::ForgotPassword;
 pub use login_panel::{LoginPanel, LoginProvider, LoginSubmit, SubmitKind};
-pub use oauth_providers::{use_oauth_providers, OAuthProvidersProvider};
+pub use oauth_providers::{OAuthProvidersProvider, use_oauth_providers};
 pub use permissions::{
-    use_permissions, PermissionGate, PermissionSet, PermissionsProvider, Policy,
-    RequirePermission, UsePermissions,
+    PermissionGate, PermissionSet, PermissionsProvider, Policy, RequirePermission, UsePermissions,
+    use_permissions,
 };
 pub use require_auth::RequireAuth;
 #[cfg(feature = "mail")]

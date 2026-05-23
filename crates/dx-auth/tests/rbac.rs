@@ -54,8 +54,14 @@ async fn list_permissions_dedupes_when_user_holds_two_roles_with_overlapping_tok
     auth::set_user_roles(&pool, uid, &[r1, r2]).await.unwrap();
 
     let perms = auth::list_permissions_for_user(&pool, uid).await.unwrap();
-    let shared_hits = perms.iter().filter(|p| p.as_str() == "shared:token").count();
-    assert_eq!(shared_hits, 1, "duplicate tokens must be deduped: {perms:?}");
+    let shared_hits = perms
+        .iter()
+        .filter(|p| p.as_str() == "shared:token")
+        .count();
+    assert_eq!(
+        shared_hits, 1,
+        "duplicate tokens must be deduped: {perms:?}"
+    );
     assert!(perms.contains(&"extra:1".to_string()));
     assert!(perms.contains(&"extra:2".to_string()));
 }
@@ -80,7 +86,12 @@ async fn set_user_roles_replaces_atomically() {
 
     // Empty list wipes all grants.
     auth::set_user_roles(&pool, uid, &[]).await.unwrap();
-    assert!(auth::get_user_role_ids(&pool, uid).await.unwrap().is_empty());
+    assert!(
+        auth::get_user_role_ids(&pool, uid)
+            .await
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[tokio::test]
@@ -134,8 +145,13 @@ async fn create_role_dedups_and_trims_tokens() {
     )
     .await
     .unwrap();
-    let perms = auth::list_permissions_for_role(&pool, role_id).await.unwrap();
-    assert_eq!(perms, vec!["ticket:read".to_string(), "ticket:write".to_string()]);
+    let perms = auth::list_permissions_for_role(&pool, role_id)
+        .await
+        .unwrap();
+    assert_eq!(
+        perms,
+        vec!["ticket:read".to_string(), "ticket:write".to_string()]
+    );
 }
 
 #[tokio::test]
@@ -172,7 +188,9 @@ async fn update_role_replaces_permission_set() {
     )
     .await
     .unwrap();
-    let perms = auth::list_permissions_for_role(&pool, role_id).await.unwrap();
+    let perms = auth::list_permissions_for_role(&pool, role_id)
+        .await
+        .unwrap();
     assert_eq!(perms, vec!["ops:read".to_string()]);
 }
 
@@ -187,12 +205,11 @@ async fn delete_role_clears_user_role_assignments() {
 
     auth::delete_role(&pool, role_id).await.unwrap();
 
-    let count: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM user_roles WHERE role_id = $1")
-            .bind(role_id)
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM user_roles WHERE role_id = $1")
+        .bind(role_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
     assert_eq!(count, 0);
 
     let perms = auth::list_permissions_for_user(&pool, uid).await.unwrap();
@@ -203,19 +220,20 @@ async fn delete_role_clears_user_role_assignments() {
 async fn grant_role_is_idempotent() {
     let pool = common::pool().await;
     let uid = common::make_user(&pool, "frank@example.com", "hunter22!").await;
-    let r = auth::create_role(&pool, "doubler", None, &[]).await.unwrap();
+    let r = auth::create_role(&pool, "doubler", None, &[])
+        .await
+        .unwrap();
     auth::grant_role(&pool, uid, r).await.unwrap();
     // Second grant must not error and must not create a duplicate row.
     auth::grant_role(&pool, uid, r).await.unwrap();
 
-    let count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM user_roles WHERE user_id = $1 AND role_id = $2",
-    )
-    .bind(uid)
-    .bind(r)
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    let count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM user_roles WHERE user_id = $1 AND role_id = $2")
+            .bind(uid)
+            .bind(r)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     assert_eq!(count, 1);
 }
 
@@ -223,7 +241,9 @@ async fn grant_role_is_idempotent() {
 async fn revoke_role_is_idempotent() {
     let pool = common::pool().await;
     let uid = common::make_user(&pool, "gina@example.com", "hunter22!").await;
-    let r = auth::create_role(&pool, "revoker", None, &[]).await.unwrap();
+    let r = auth::create_role(&pool, "revoker", None, &[])
+        .await
+        .unwrap();
     auth::revoke_role(&pool, uid, r).await.unwrap(); // never had it → fine
     auth::grant_role(&pool, uid, r).await.unwrap();
     auth::revoke_role(&pool, uid, r).await.unwrap();
@@ -251,7 +271,12 @@ async fn soft_delete_user_revokes_all_roles_and_links() {
 
     auth::soft_delete_user(&pool, uid).await.unwrap();
 
-    assert!(auth::get_user_role_ids(&pool, uid).await.unwrap().is_empty());
+    assert!(
+        auth::get_user_role_ids(&pool, uid)
+            .await
+            .unwrap()
+            .is_empty()
+    );
     let oauth_count: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM oauth_accounts WHERE user_id = $1")
             .bind(uid)
@@ -268,13 +293,12 @@ async fn soft_delete_user_revokes_all_roles_and_links() {
     assert_eq!(perm_count, 0);
 
     // PII is null but the row still exists so app-owned FKs don't break.
-    let row: (Option<String>, Option<String>, Option<i64>) = sqlx::query_as(
-        "SELECT email, password_hash, deleted_at FROM users WHERE id = $1",
-    )
-    .bind(uid)
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    let row: (Option<String>, Option<String>, Option<i64>) =
+        sqlx::query_as("SELECT email, password_hash, deleted_at FROM users WHERE id = $1")
+            .bind(uid)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     assert!(row.0.is_none(), "email cleared");
     assert!(row.1.is_none(), "password_hash cleared");
     assert!(row.2.is_some(), "deleted_at stamped");
@@ -302,23 +326,21 @@ async fn update_display_name_clears_with_none() {
     let pool = common::pool().await;
     let uid = common::make_user(&pool, "joe@example.com", "hunter22!").await;
 
-    auth::update_display_name(&pool, uid, Some("Joe Bloggs")).await.unwrap();
-    let row: Option<String> = sqlx::query_scalar(
-        "SELECT display_name FROM users WHERE id = $1",
-    )
-    .bind(uid)
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    auth::update_display_name(&pool, uid, Some("Joe Bloggs"))
+        .await
+        .unwrap();
+    let row: Option<String> = sqlx::query_scalar("SELECT display_name FROM users WHERE id = $1")
+        .bind(uid)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
     assert_eq!(row.as_deref(), Some("Joe Bloggs"));
 
     auth::update_display_name(&pool, uid, None).await.unwrap();
-    let row: Option<String> = sqlx::query_scalar(
-        "SELECT display_name FROM users WHERE id = $1",
-    )
-    .bind(uid)
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    let row: Option<String> = sqlx::query_scalar("SELECT display_name FROM users WHERE id = $1")
+        .bind(uid)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
     assert!(row.is_none());
 }

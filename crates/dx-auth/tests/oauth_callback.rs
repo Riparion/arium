@@ -25,8 +25,8 @@ use async_trait::async_trait;
 use axum::Router;
 use dx_auth::oauth::{NormalizedProfile, OAuthProvider};
 use dx_auth::{AuditConfig, AuthConfig, Mailer};
-use reqwest::redirect::Policy;
 use reqwest::Client;
+use reqwest::redirect::Policy;
 use serde_json::json;
 use sqlx::SqlitePool;
 use std::net::SocketAddr;
@@ -118,9 +118,7 @@ async fn boot(mock_token_url: &str, profile: NormalizedProfile) -> TestApp {
         })
         .build();
 
-    let router: Router = dx_auth::install(Router::new(), cfg)
-        .await
-        .expect("install");
+    let router: Router = dx_auth::install(Router::new(), cfg).await.expect("install");
 
     // Bind to an ephemeral port so parallel tests don't collide.
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
@@ -184,8 +182,11 @@ async fn login_redirects_to_authorize_url_with_state_and_scopes() {
 
     let q: std::collections::HashMap<_, _> = parsed.query_pairs().collect();
     assert_eq!(q.get("response_type").map(|s| s.as_ref()), Some("code"));
-    assert_eq!(q.get("client_id").map(|s| s.as_ref()), Some("test-client-id"));
-    assert!(q.get("state").is_some(), "state must be present");
+    assert_eq!(
+        q.get("client_id").map(|s| s.as_ref()),
+        Some("test-client-id")
+    );
+    assert!(q.contains_key("state"), "state must be present");
     let scope = q.get("scope").map(|s| s.to_string()).unwrap_or_default();
     assert!(scope.contains("read:user"), "scope={scope:?}");
     assert!(scope.contains("user:email"), "scope={scope:?}");
@@ -244,19 +245,17 @@ async fn callback_happy_path_creates_user_and_records_audit_event() {
     );
 
     // The upsert ran: user + oauth_accounts row exist.
-    let user_count: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE anonymous = false")
+    let user_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE anonymous = false")
+        .fetch_one(&app.pool)
+        .await
+        .unwrap();
+    assert_eq!(user_count, 1);
+
+    let oa: (String, String) =
+        sqlx::query_as("SELECT provider, provider_user_id FROM oauth_accounts LIMIT 1")
             .fetch_one(&app.pool)
             .await
             .unwrap();
-    assert_eq!(user_count, 1);
-
-    let oa: (String, String) = sqlx::query_as(
-        "SELECT provider, provider_user_id FROM oauth_accounts LIMIT 1",
-    )
-    .fetch_one(&app.pool)
-    .await
-    .unwrap();
     assert_eq!(oa, ("test".to_string(), "ext-1".to_string()));
 
     // Audit event recorded with method=oauth in the details JSON.
@@ -485,7 +484,9 @@ async fn token_request_carries_client_credentials_and_code() {
     let mock = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path("/token"))
-        .and(wiremock::matchers::body_string_contains("grant_type=authorization_code"))
+        .and(wiremock::matchers::body_string_contains(
+            "grant_type=authorization_code",
+        ))
         .and(wiremock::matchers::body_string_contains("code=fake-code"))
         .and(wiremock::matchers::header(
             "authorization",
@@ -527,4 +528,3 @@ async fn token_request_carries_client_credentials_and_code() {
     drop(app);
     drop(mock);
 }
-

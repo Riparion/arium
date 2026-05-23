@@ -1,16 +1,15 @@
 //! The code here is pulled from the `axum-session-auth` crate examples, requiring little to no
 //! modification to work with dioxus fullstack.
 
+use crate::pool::Pool;
+use crate::pool::SessionPool;
 use async_trait::async_trait;
 use axum_session_auth::*;
-use crate::pool::SessionPool;
 use serde::{Deserialize, Serialize};
-use crate::pool::Pool;
 use std::collections::HashSet;
 
 pub type Session = axum_session_auth::AuthSession<User, i64, SessionPool, Pool>;
-pub type AuthLayer =
-    axum_session_auth::AuthSessionLayer<User, i64, SessionPool, Pool>;
+pub type AuthLayer = axum_session_auth::AuthSessionLayer<User, i64, SessionPool, Pool>;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct User {
@@ -122,10 +121,10 @@ pub async fn maybe_bootstrap_admin(
 ) -> anyhow::Result<()> {
     let Some(email) = email else { return Ok(()) };
     let target = bootstrap_admin_email();
-    if let Some(t) = target {
-        if t.eq_ignore_ascii_case(email) {
-            grant_role(db, user_id, role::ADMIN).await?;
-        }
+    if let Some(t) = target
+        && t.eq_ignore_ascii_case(email)
+    {
+        grant_role(db, user_id, role::ADMIN).await?;
     }
     Ok(())
 }
@@ -170,7 +169,9 @@ pub async fn maybe_grant_first_admin(db: &Pool, user_id: i64) -> anyhow::Result<
 /// No-op when the env var is unset, empty, or the email doesn't match
 /// any (non-soft-deleted) account.
 pub async fn sync_bootstrap_admin(db: &Pool) -> anyhow::Result<()> {
-    let Some(email) = bootstrap_admin_email() else { return Ok(()) };
+    let Some(email) = bootstrap_admin_email() else {
+        return Ok(());
+    };
 
     let user: Option<(i64,)> = sqlx::query_as(
         "SELECT id FROM users \
@@ -188,13 +189,12 @@ pub async fn sync_bootstrap_admin(db: &Pool) -> anyhow::Result<()> {
         return Ok(());
     };
 
-    let already: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM user_roles WHERE user_id = $1 AND role_id = $2",
-    )
-    .bind(user_id)
-    .bind(role::ADMIN)
-    .fetch_one(db)
-    .await?;
+    let already: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM user_roles WHERE user_id = $1 AND role_id = $2")
+            .bind(user_id)
+            .bind(role::ADMIN)
+            .fetch_one(db)
+            .await?;
 
     if already == 0 {
         grant_role(db, user_id, role::ADMIN).await?;
@@ -244,11 +244,7 @@ pub async fn revoke_role(db: &Pool, user_id: i64, role_id: i64) -> anyhow::Resul
 
 /// Replace a user's full set of roles with the supplied list (single
 /// transaction so observers never see a half-applied state).
-pub async fn set_user_roles(
-    db: &Pool,
-    user_id: i64,
-    role_ids: &[i64],
-) -> anyhow::Result<()> {
+pub async fn set_user_roles(db: &Pool, user_id: i64, role_ids: &[i64]) -> anyhow::Result<()> {
     let mut tx = db.begin().await?;
     sqlx::query("DELETE FROM user_roles WHERE user_id = $1")
         .bind(user_id)
@@ -520,7 +516,7 @@ pub async fn list_users_for_admin(
          ORDER BY id \
          LIMIT $1 OFFSET $2",
     )
-    .bind(limit.max(1).min(500))
+    .bind(limit.clamp(1, 500))
     .bind(offset.max(0))
     .fetch_all(db)
     .await?;
@@ -528,10 +524,7 @@ pub async fn list_users_for_admin(
 }
 
 /// Single-user detail for the admin UI.
-pub async fn get_user_for_admin(
-    db: &Pool,
-    user_id: i64,
-) -> anyhow::Result<Option<AdminUserRow>> {
+pub async fn get_user_for_admin(db: &Pool, user_id: i64) -> anyhow::Result<Option<AdminUserRow>> {
     let row = sqlx::query_as::<_, AdminUserRow>(
         "SELECT id, username, display_name, email, email_verified_at, \
                 mfa_enabled_at, anonymous, deleted_at, name, avatar_url, html_url \
@@ -545,10 +538,7 @@ pub async fn get_user_for_admin(
 
 /// Tokens a single user resolves to (direct + role-derived). The same
 /// query `load_user` uses, just public for the admin detail view.
-pub async fn list_permissions_for_user(
-    db: &Pool,
-    user_id: i64,
-) -> anyhow::Result<Vec<String>> {
+pub async fn list_permissions_for_user(db: &Pool, user_id: i64) -> anyhow::Result<Vec<String>> {
     let rows: Vec<(String,)> = sqlx::query_as(
         "SELECT token FROM user_permissions WHERE user_id = $1 \
          UNION \
@@ -564,16 +554,12 @@ pub async fn list_permissions_for_user(
 }
 
 /// Permission tokens attached to a role.
-pub async fn list_permissions_for_role(
-    db: &Pool,
-    role_id: i64,
-) -> anyhow::Result<Vec<String>> {
-    let rows: Vec<(String,)> = sqlx::query_as(
-        "SELECT token FROM role_permissions WHERE role_id = $1 ORDER BY token",
-    )
-    .bind(role_id)
-    .fetch_all(db)
-    .await?;
+pub async fn list_permissions_for_role(db: &Pool, role_id: i64) -> anyhow::Result<Vec<String>> {
+    let rows: Vec<(String,)> =
+        sqlx::query_as("SELECT token FROM role_permissions WHERE role_id = $1 ORDER BY token")
+            .bind(role_id)
+            .fetch_all(db)
+            .await?;
     Ok(rows.into_iter().map(|(t,)| t).collect())
 }
 
@@ -582,10 +568,7 @@ pub async fn list_permissions_for_role(
 /// Look up the current password hash for the given user (None for OAuth-only
 /// accounts). Used by `change_password` to verify the old password before
 /// writing the new one.
-pub async fn get_password_hash(
-    db: &Pool,
-    user_id: i64,
-) -> anyhow::Result<Option<String>> {
+pub async fn get_password_hash(db: &Pool, user_id: i64) -> anyhow::Result<Option<String>> {
     let row: Option<(Option<String>,)> =
         sqlx::query_as("SELECT password_hash FROM users WHERE id = $1")
             .bind(user_id)
@@ -615,8 +598,8 @@ pub async fn replace_password_hash(
 
 /// Verify a candidate plaintext password against a stored hash.
 pub fn verify_password_against_hash(stored_hash: &str, candidate: &str) -> bool {
-    use argon2::password_hash::{PasswordHash, PasswordVerifier};
     use argon2::Argon2;
+    use argon2::password_hash::{PasswordHash, PasswordVerifier};
     let Ok(parsed) = PasswordHash::new(stored_hash) else {
         return false;
     };
@@ -626,10 +609,7 @@ pub fn verify_password_against_hash(stored_hash: &str, candidate: &str) -> bool 
 }
 
 /// OAuth provider names this user has linked accounts for (e.g. "github").
-pub async fn linked_oauth_providers(
-    db: &Pool,
-    user_id: i64,
-) -> anyhow::Result<Vec<String>> {
+pub async fn linked_oauth_providers(db: &Pool, user_id: i64) -> anyhow::Result<Vec<String>> {
     let rows: Vec<(String,)> = sqlx::query_as(
         "SELECT DISTINCT provider FROM oauth_accounts WHERE user_id = $1 ORDER BY provider",
     )
@@ -644,13 +624,9 @@ pub async fn linked_oauth_providers(
 /// Returns the new user's id on success. The error is a user-facing message
 /// (server fn can surface it verbatim) — we deliberately avoid distinguishing
 /// "no such user" from "wrong password" anywhere to prevent enumeration.
-pub async fn create_password_user(
-    db: &Pool,
-    email: &str,
-    password: &str,
-) -> anyhow::Result<i64> {
-    use argon2::password_hash::{rand_core::OsRng, PasswordHasher, SaltString};
+pub async fn create_password_user(db: &Pool, email: &str, password: &str) -> anyhow::Result<i64> {
     use argon2::Argon2;
+    use argon2::password_hash::{PasswordHasher, SaltString, rand_core::OsRng};
 
     let email = email.trim();
     if email.is_empty() || !email.contains('@') {
@@ -698,10 +674,7 @@ pub async fn create_password_user(
 /// Returns `None` when no such account exists — the server fn deliberately
 /// surfaces the same "we sent it if the address was valid" response in both
 /// cases to avoid revealing which emails are registered.
-pub async fn request_password_reset(
-    db: &Pool,
-    email: &str,
-) -> anyhow::Result<Option<String>> {
+pub async fn request_password_reset(db: &Pool, email: &str) -> anyhow::Result<Option<String>> {
     use argon2::password_hash::rand_core::{OsRng, RngCore};
 
     let user: Option<(i64,)> = sqlx::query_as(
@@ -782,8 +755,8 @@ pub async fn consume_password_reset(
 }
 
 fn hash_password(plaintext: &str) -> anyhow::Result<String> {
-    use argon2::password_hash::{rand_core::OsRng, PasswordHasher, SaltString};
     use argon2::Argon2;
+    use argon2::password_hash::{PasswordHasher, SaltString, rand_core::OsRng};
     let salt = SaltString::generate(&mut OsRng);
     Ok(Argon2::default()
         .hash_password(plaintext.as_bytes(), &salt)
@@ -816,8 +789,8 @@ pub async fn verify_password_user(
     email: &str,
     password: &str,
 ) -> anyhow::Result<VerifyOutcome> {
-    use argon2::password_hash::{PasswordHash, PasswordVerifier};
     use argon2::Argon2;
+    use argon2::password_hash::{PasswordHash, PasswordVerifier};
 
     let row: Option<(i64, String, Option<i64>)> = sqlx::query_as(
         "SELECT id, password_hash, email_verified_at FROM users \
@@ -851,10 +824,7 @@ pub async fn verify_password_user(
 }
 
 /// Issue a 24-hour email verification token for the given user.
-pub async fn issue_verification_token(
-    db: &Pool,
-    user_id: i64,
-) -> anyhow::Result<String> {
+pub async fn issue_verification_token(db: &Pool, user_id: i64) -> anyhow::Result<String> {
     use argon2::password_hash::rand_core::{OsRng, RngCore};
 
     // 16 random bytes = 128 bits of entropy, plenty for short-lived
@@ -883,10 +853,7 @@ pub async fn issue_verification_token(
 /// Consume an email verification token: mark the user verified, delete all
 /// outstanding tokens for them, and return the user id. Returns `None` when
 /// the token is unknown or expired.
-pub async fn consume_verification_token(
-    db: &Pool,
-    token: &str,
-) -> anyhow::Result<Option<i64>> {
+pub async fn consume_verification_token(db: &Pool, token: &str) -> anyhow::Result<Option<i64>> {
     let row: Option<(i64,)> = sqlx::query_as(
         "SELECT user_id FROM email_verification_tokens WHERE token = $1 AND expires_at > $2 LIMIT 1",
     )
@@ -966,8 +933,8 @@ pub async fn setup_mfa_secret(
     user_id: i64,
     account_label: &str,
 ) -> anyhow::Result<MfaSetupInfo> {
-    use argon2::password_hash::{rand_core::OsRng, PasswordHasher, SaltString};
     use argon2::Argon2;
+    use argon2::password_hash::{PasswordHasher, SaltString, rand_core::OsRng};
     use totp_rs::{Algorithm, Secret, TOTP};
 
     let secret = Secret::generate_secret();
@@ -1032,11 +999,7 @@ pub async fn setup_mfa_secret(
 /// Confirm enrollment by validating a current TOTP from the pending secret.
 /// Returns `true` when the code matched and `mfa_enabled_at` is now set.
 #[cfg(feature = "mfa")]
-pub async fn enable_mfa(
-    db: &Pool,
-    user_id: i64,
-    totp_code: &str,
-) -> anyhow::Result<bool> {
+pub async fn enable_mfa(db: &Pool, user_id: i64, totp_code: &str) -> anyhow::Result<bool> {
     let Some(secret) = load_mfa_secret(db, user_id).await? else {
         return Ok(false);
     };
@@ -1054,17 +1017,13 @@ pub async fn enable_mfa(
 /// Login-time second-factor check. Accepts a 6-digit TOTP code or one of
 /// the user's unused recovery codes (marked used on success).
 #[cfg(feature = "mfa")]
-pub async fn verify_mfa_challenge(
-    db: &Pool,
-    user_id: i64,
-    code: &str,
-) -> anyhow::Result<bool> {
+pub async fn verify_mfa_challenge(db: &Pool, user_id: i64, code: &str) -> anyhow::Result<bool> {
     let code = code.trim();
 
-    if let Some(secret) = load_mfa_secret(db, user_id).await? {
-        if check_totp(&secret, code) {
-            return Ok(true);
-        }
+    if let Some(secret) = load_mfa_secret(db, user_id).await?
+        && check_totp(&secret, code)
+    {
+        return Ok(true);
     }
 
     consume_recovery_code(db, user_id, code).await
@@ -1136,13 +1095,9 @@ fn check_totp(secret_base32: &str, code: &str) -> bool {
 }
 
 #[cfg(feature = "mfa")]
-async fn consume_recovery_code(
-    db: &Pool,
-    user_id: i64,
-    candidate: &str,
-) -> anyhow::Result<bool> {
-    use argon2::password_hash::{PasswordHash, PasswordVerifier};
+async fn consume_recovery_code(db: &Pool, user_id: i64, candidate: &str) -> anyhow::Result<bool> {
     use argon2::Argon2;
+    use argon2::password_hash::{PasswordHash, PasswordVerifier};
 
     let rows: Vec<(String,)> = sqlx::query_as(
         "SELECT code_hash FROM mfa_recovery_codes WHERE user_id = $1 AND used_at IS NULL",
@@ -1152,22 +1107,21 @@ async fn consume_recovery_code(
     .await?;
 
     for (hash,) in rows {
-        if let Ok(parsed) = PasswordHash::new(&hash) {
-            if Argon2::default()
+        if let Ok(parsed) = PasswordHash::new(&hash)
+            && Argon2::default()
                 .verify_password(candidate.as_bytes(), &parsed)
                 .is_ok()
-            {
-                sqlx::query(
-                    "UPDATE mfa_recovery_codes SET used_at = $1 \
+        {
+            sqlx::query(
+                "UPDATE mfa_recovery_codes SET used_at = $1 \
                      WHERE user_id = $2 AND code_hash = $3",
-                )
-                .bind(unix_now())
-                .bind(user_id)
-                .bind(&hash)
-                .execute(db)
-                .await?;
-                return Ok(true);
-            }
+            )
+            .bind(unix_now())
+            .bind(user_id)
+            .bind(&hash)
+            .execute(db)
+            .await?;
+            return Ok(true);
         }
     }
     Ok(false)
@@ -1188,10 +1142,7 @@ fn generate_recovery_code<R: argon2::password_hash::rand_core::RngCore>(rng: &mu
 
 /// Look up a still-unverified password account by email. Used by the
 /// "resend verification email" endpoint.
-pub async fn find_unverified_user_id(
-    db: &Pool,
-    email: &str,
-) -> anyhow::Result<Option<i64>> {
+pub async fn find_unverified_user_id(db: &Pool, email: &str) -> anyhow::Result<Option<i64>> {
     let row: Option<(i64,)> = sqlx::query_as(
         "SELECT id FROM users \
          WHERE LOWER(email) = LOWER($1) \
@@ -1220,24 +1171,24 @@ pub mod audit {
     // Apps are free to emit their own taxonomies in addition.
 
     pub const USER_LOGIN_SUCCESS: &str = "user.login.success";
-    pub const USER_LOGIN_FAILED:  &str = "user.login.failed";
-    pub const USER_LOGOUT:        &str = "user.logout";
-    pub const USER_SIGNUP:        &str = "user.signup";
+    pub const USER_LOGIN_FAILED: &str = "user.login.failed";
+    pub const USER_LOGOUT: &str = "user.logout";
+    pub const USER_SIGNUP: &str = "user.signup";
     pub const USER_EMAIL_VERIFIED: &str = "user.email_verified";
     pub const USER_PWD_RESET_REQUESTED: &str = "user.password_reset.requested";
-    pub const USER_PWD_RESET_CONSUMED:  &str = "user.password_reset.consumed";
-    pub const USER_MFA_ENABLED:   &str = "user.mfa.enabled";
-    pub const USER_MFA_DISABLED:  &str = "user.mfa.disabled";
+    pub const USER_PWD_RESET_CONSUMED: &str = "user.password_reset.consumed";
+    pub const USER_MFA_ENABLED: &str = "user.mfa.enabled";
+    pub const USER_MFA_DISABLED: &str = "user.mfa.disabled";
 
-    pub const ACCOUNT_PASSWORD_CHANGED:    &str = "account.password_changed";
+    pub const ACCOUNT_PASSWORD_CHANGED: &str = "account.password_changed";
     pub const ACCOUNT_DISPLAY_NAME_CHANGED: &str = "account.display_name_changed";
-    pub const ACCOUNT_SELF_DELETED:        &str = "account.self_deleted";
+    pub const ACCOUNT_SELF_DELETED: &str = "account.self_deleted";
 
     pub const ADMIN_ROLES_CHANGED: &str = "admin.user.roles_changed";
-    pub const ADMIN_USER_DELETED:  &str = "admin.user.soft_deleted";
-    pub const ADMIN_ROLE_CREATED:  &str = "admin.role.created";
-    pub const ADMIN_ROLE_UPDATED:  &str = "admin.role.updated";
-    pub const ADMIN_ROLE_DELETED:  &str = "admin.role.deleted";
+    pub const ADMIN_USER_DELETED: &str = "admin.user.soft_deleted";
+    pub const ADMIN_ROLE_CREATED: &str = "admin.role.created";
+    pub const ADMIN_ROLE_UPDATED: &str = "admin.role.updated";
+    pub const ADMIN_ROLE_DELETED: &str = "admin.role.deleted";
 
     /// All fields are optional — pass `None` for whatever you don't have.
     /// `details` should be a small JSON document (or `None`).
@@ -1286,18 +1237,21 @@ pub mod audit {
 
         // Event type can be exact or "prefix." (trailing dot signals
         // prefix match via LIKE).
-        let (type_clause, type_pattern, type_is_filtered) =
-            if q.event_type.is_empty() {
-                ("".to_string(), String::new(), false)
-            } else if q.event_type.ends_with('.') {
-                (" AND e.event_type LIKE $1".to_string(),
-                 format!("{}%", q.event_type),
-                 true)
-            } else {
-                (" AND e.event_type = $1".to_string(),
-                 q.event_type.clone(),
-                 true)
-            };
+        let (type_clause, type_pattern, type_is_filtered) = if q.event_type.is_empty() {
+            ("".to_string(), String::new(), false)
+        } else if q.event_type.ends_with('.') {
+            (
+                " AND e.event_type LIKE $1".to_string(),
+                format!("{}%", q.event_type),
+                true,
+            )
+        } else {
+            (
+                " AND e.event_type = $1".to_string(),
+                q.event_type.clone(),
+                true,
+            )
+        };
 
         // Build the parameter list incrementally so positional placeholders
         // line up across sqlite/postgres ($N works on both).

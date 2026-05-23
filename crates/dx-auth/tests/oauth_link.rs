@@ -10,7 +10,7 @@
 mod common;
 
 use dx_auth::auth;
-use dx_auth::oauth::{upsert_oauth_user, NormalizedProfile};
+use dx_auth::oauth::{NormalizedProfile, upsert_oauth_user};
 
 fn profile(provider_user_id: &str, login: &str, email: Option<&str>) -> NormalizedProfile {
     NormalizedProfile {
@@ -45,13 +45,12 @@ async fn repeat_login_returns_same_user_and_refreshes_profile_fields() {
 
     assert_eq!(again, user_id, "repeat login must return the same user id");
 
-    let row: (String, Option<String>, Option<String>) = sqlx::query_as(
-        "SELECT username, name, avatar_url FROM users WHERE id = $1",
-    )
-    .bind(user_id)
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    let row: (String, Option<String>, Option<String>) =
+        sqlx::query_as("SELECT username, name, avatar_url FROM users WHERE id = $1")
+            .bind(user_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     assert_eq!(row.0, "octocat-renamed");
     assert_eq!(row.1.as_deref(), Some("Octo Cat the Second"));
     assert_eq!(row.2.as_deref(), Some("https://example.invalid/new.png"));
@@ -124,14 +123,24 @@ async fn two_providers_link_to_same_local_user() {
     let pool = common::pool().await;
     let existing_id = common::make_user(&pool, "carol@example.com", "hunter22!").await;
 
-    upsert_oauth_user(&pool, "github", profile("gh-1", "carol", Some("carol@example.com")))
-        .await
-        .unwrap();
-    upsert_oauth_user(&pool, "gitlab", profile("gl-1", "carol", Some("carol@example.com")))
-        .await
-        .unwrap();
+    upsert_oauth_user(
+        &pool,
+        "github",
+        profile("gh-1", "carol", Some("carol@example.com")),
+    )
+    .await
+    .unwrap();
+    upsert_oauth_user(
+        &pool,
+        "gitlab",
+        profile("gl-1", "carol", Some("carol@example.com")),
+    )
+    .await
+    .unwrap();
 
-    let providers = auth::linked_oauth_providers(&pool, existing_id).await.unwrap();
+    let providers = auth::linked_oauth_providers(&pool, existing_id)
+        .await
+        .unwrap();
     // Sorted by the underlying query.
     assert_eq!(providers, vec!["github".to_string(), "gitlab".to_string()]);
 
@@ -187,13 +196,14 @@ async fn provider_returning_no_email_creates_a_new_user_without_linking() {
     let new_id = upsert_oauth_user(&pool, "github", prof).await.unwrap();
 
     // We got a brand-new user, not the prior emailless one.
-    let count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM users WHERE anonymous = false",
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-    assert_eq!(count, 2, "an emailless OAuth profile must not link via NULL match");
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE anonymous = false")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        count, 2,
+        "an emailless OAuth profile must not link via NULL match"
+    );
 
     // The new user has the oauth_accounts row attached.
     let attached_to: i64 = sqlx::query_scalar(

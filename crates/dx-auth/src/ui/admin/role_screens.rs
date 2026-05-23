@@ -1,9 +1,7 @@
 use dioxus::prelude::*;
 
 use crate::friendly_server_error;
-use crate::server::{
-    admin_create_role, admin_delete_role, admin_list_roles, admin_update_role,
-};
+use crate::server::{admin_create_role, admin_delete_role, admin_list_roles, admin_update_role};
 use crate::ui::components::badge::{Badge, BadgeVariant};
 use crate::ui::components::button::{Button, ButtonVariant};
 use crate::ui::components::card::{Card, CardContent, CardDescription, CardHeader, CardTitle};
@@ -16,10 +14,7 @@ use crate::wire::AdminRoleDetail;
 const ROLE_COLUMNS: &str =
     "--data-cols: minmax(10rem, 1.5fr) minmax(12rem, 2fr) minmax(6rem, 1fr) minmax(6rem, 0.75fr);";
 
-const ADMIN_CSS: Asset = asset!(
-    "/src/ui/admin/style.css",
-    AssetOptions::css_module()
-);
+const ADMIN_CSS: Asset = asset!("/src/ui/admin/style.css", AssetOptions::css_module());
 
 #[css_module("/src/ui/admin/style.css")]
 struct Styles;
@@ -174,7 +169,11 @@ pub fn AdminRoleEditor(role_id: Option<i64>, on_back: EventHandler<()>) -> Eleme
         }
     });
 
-    let title = if role_id.is_some() { "Edit role" } else { "New role" };
+    let title = if role_id.is_some() {
+        "Edit role"
+    } else {
+        "New role"
+    };
     let editing_id = role_id;
 
     let body = if !initialized() {

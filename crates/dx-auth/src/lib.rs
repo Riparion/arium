@@ -112,6 +112,9 @@ pub fn friendly_server_error(e: dioxus::CapturedError) -> String {
     let rest = raw
         .strip_prefix("error running server function: ")
         .unwrap_or(&raw);
-    let cleaned = rest.rsplit_once(" (details:").map(|(m, _)| m).unwrap_or(rest);
+    let cleaned = rest
+        .rsplit_once(" (details:")
+        .map(|(m, _)| m)
+        .unwrap_or(rest);
     cleaned.to_string()
 }

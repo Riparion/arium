@@ -37,7 +37,9 @@ impl GithubProvider {
     /// will then hide the GitHub button. Partial config (one set, one
     /// missing) returns `None` with a warning logged.
     pub fn from_env() -> anyhow::Result<Option<Self>> {
-        let id = std::env::var("GITHUB_CLIENT_ID").ok().filter(|s| !s.is_empty());
+        let id = std::env::var("GITHUB_CLIENT_ID")
+            .ok()
+            .filter(|s| !s.is_empty());
         let secret = std::env::var("GITHUB_CLIENT_SECRET")
             .ok()
             .filter(|s| !s.is_empty());

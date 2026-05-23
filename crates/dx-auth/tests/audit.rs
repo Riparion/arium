@@ -16,7 +16,11 @@ mod common;
 use dx_auth::auth::audit;
 use dx_auth::wire::AuditQuery;
 
-fn input<'a>(event_type: &'a str, actor: Option<i64>, target: Option<i64>) -> audit::RecordInput<'a> {
+fn input<'a>(
+    event_type: &'a str,
+    actor: Option<i64>,
+    target: Option<i64>,
+) -> audit::RecordInput<'a> {
     audit::RecordInput {
         event_type,
         actor_id: actor,
@@ -157,14 +161,12 @@ async fn query_filters_by_time_range() {
     let t1 = common::now_secs() - 50;
     let t2 = common::now_secs() - 10;
     for (i, ts) in [t0, t1, t2].iter().enumerate() {
-        sqlx::query(
-            "INSERT INTO audit_events (occurred_at, event_type) VALUES ($1, $2)",
-        )
-        .bind(ts)
-        .bind(format!("evt.{i}"))
-        .execute(&pool)
-        .await
-        .unwrap();
+        sqlx::query("INSERT INTO audit_events (occurred_at, event_type) VALUES ($1, $2)")
+            .bind(ts)
+            .bind(format!("evt.{i}"))
+            .execute(&pool)
+            .await
+            .unwrap();
     }
 
     let q = AuditQuery {
@@ -175,7 +177,10 @@ async fn query_filters_by_time_range() {
     let rows = audit::query(&pool, &q).await.unwrap();
     // inclusive both ends → t1 and t2 match, t0 doesn't.
     assert_eq!(rows.len(), 2);
-    assert!(rows.iter().all(|r| r.occurred_at >= t1 && r.occurred_at <= t2));
+    assert!(
+        rows.iter()
+            .all(|r| r.occurred_at >= t1 && r.occurred_at <= t2)
+    );
 }
 
 #[tokio::test]
@@ -183,14 +188,12 @@ async fn query_sorts_newest_first() {
     let pool = common::pool().await;
     let base = common::now_secs();
     for (offset, label) in [(0, "a"), (-10, "b"), (-5, "c")] {
-        sqlx::query(
-            "INSERT INTO audit_events (occurred_at, event_type) VALUES ($1, $2)",
-        )
-        .bind(base + offset)
-        .bind(label)
-        .execute(&pool)
-        .await
-        .unwrap();
+        sqlx::query("INSERT INTO audit_events (occurred_at, event_type) VALUES ($1, $2)")
+            .bind(base + offset)
+            .bind(label)
+            .execute(&pool)
+            .await
+            .unwrap();
     }
     let rows = audit::query(&pool, &empty_query()).await.unwrap();
     let types: Vec<_> = rows.iter().map(|r| r.event_type.as_str()).collect();
@@ -219,9 +222,12 @@ async fn query_joins_actor_and_target_email_when_users_exist() {
     let alice = common::make_user(&pool, "alice@example.com", "hunter22!").await;
     let bob = common::make_user(&pool, "bob@example.com", "hunter22!").await;
 
-    audit::record(&pool, input(audit::ADMIN_USER_DELETED, Some(alice), Some(bob)))
-        .await
-        .unwrap();
+    audit::record(
+        &pool,
+        input(audit::ADMIN_USER_DELETED, Some(alice), Some(bob)),
+    )
+    .await
+    .unwrap();
 
     let rows = audit::query(&pool, &empty_query()).await.unwrap();
     let row = rows
@@ -235,7 +241,9 @@ async fn query_joins_actor_and_target_email_when_users_exist() {
 #[tokio::test]
 async fn prune_zero_days_is_noop() {
     let pool = common::pool().await;
-    audit::record(&pool, input("evt", None, None)).await.unwrap();
+    audit::record(&pool, input("evt", None, None))
+        .await
+        .unwrap();
     let n = audit::prune(&pool, 0).await.unwrap();
     assert_eq!(n, 0);
 
@@ -306,13 +314,12 @@ async fn record_propagates_errors_to_caller() {
 #[tokio::test]
 async fn occurred_at_iso_is_a_human_readable_utc_string() {
     let pool = common::pool().await;
-    audit::record(&pool, input("evt", None, None)).await.unwrap();
+    audit::record(&pool, input("evt", None, None))
+        .await
+        .unwrap();
     let rows = audit::query(&pool, &empty_query()).await.unwrap();
     let iso = &rows[0].occurred_at_iso;
-    assert!(
-        iso.ends_with(" UTC"),
-        "expected '<ts> UTC', got {iso:?}",
-    );
+    assert!(iso.ends_with(" UTC"), "expected '<ts> UTC', got {iso:?}",);
     // Loose shape check: '2026-…' so a future timezone fix won't break this.
     assert!(iso.len() >= "2026-01-01 00:00:00 UTC".len(), "{iso:?}");
 }

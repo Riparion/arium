@@ -23,13 +23,12 @@ async fn request_returns_some_for_known_email_and_persists_a_row() {
         .unwrap()
         .expect("known email yields a token");
 
-    let count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM password_reset_tokens WHERE token = $1",
-    )
-    .bind(&token)
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    let count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM password_reset_tokens WHERE token = $1")
+            .bind(&token)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     assert_eq!(count, 1);
 }
 
@@ -103,7 +102,10 @@ async fn consume_swaps_the_password_and_invalidates_all_outstanding_tokens() {
         .await
         .unwrap_err()
         .to_string();
-    assert!(err.contains("expired") || err.contains("already been used"), "{err}");
+    assert!(
+        err.contains("expired") || err.contains("already been used"),
+        "{err}"
+    );
 }
 
 #[tokio::test]
@@ -115,7 +117,10 @@ async fn consume_rejects_unknown_token() {
         .await
         .unwrap_err()
         .to_string();
-    assert!(err.contains("expired") || err.contains("already been used"), "{err}");
+    assert!(
+        err.contains("expired") || err.contains("already been used"),
+        "{err}"
+    );
 }
 
 #[tokio::test]
@@ -140,7 +145,10 @@ async fn consume_rejects_expired_token() {
         .await
         .unwrap_err()
         .to_string();
-    assert!(err.contains("expired") || err.contains("already been used"), "{err}");
+    assert!(
+        err.contains("expired") || err.contains("already been used"),
+        "{err}"
+    );
 
     // And the original password still works — i.e. the failed consume
     // didn't accidentally clobber the hash.
@@ -168,13 +176,12 @@ async fn consume_rejects_short_password() {
     assert!(err.contains("8 characters"), "{err}");
 
     // Token must NOT have been consumed by the failed attempt.
-    let remaining: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM password_reset_tokens WHERE token = $1",
-    )
-    .bind(&token)
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    let remaining: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM password_reset_tokens WHERE token = $1")
+            .bind(&token)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     assert_eq!(remaining, 1, "failed consume must not destroy the token");
 }
 
@@ -194,7 +201,10 @@ async fn consume_then_reuse_same_token_fails() {
         .await
         .unwrap_err()
         .to_string();
-    assert!(err.contains("expired") || err.contains("already been used"), "{err}");
+    assert!(
+        err.contains("expired") || err.contains("already been used"),
+        "{err}"
+    );
 }
 
 #[tokio::test]
@@ -210,7 +220,9 @@ async fn token_is_32_lowercase_hex_chars() {
         .unwrap();
     assert_eq!(token.len(), 32);
     assert!(
-        token.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
+        token
+            .chars()
+            .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
         "token {token:?} should be lowercase hex"
     );
 }

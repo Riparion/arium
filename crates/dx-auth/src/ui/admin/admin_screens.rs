@@ -23,10 +23,7 @@ const USER_COLUMNS: &str =
 /// Companion stylesheet for the admin tables / detail layout. Same trick
 /// the LoginPanel uses: render `document::Stylesheet` so the link tag is
 /// reliably in the page even on post-hydration client-side mounts.
-const ADMIN_CSS: Asset = asset!(
-    "/src/ui/admin/style.css",
-    AssetOptions::css_module()
-);
+const ADMIN_CSS: Asset = asset!("/src/ui/admin/style.css", AssetOptions::css_module());
 
 #[css_module("/src/ui/admin/style.css")]
 struct Styles;

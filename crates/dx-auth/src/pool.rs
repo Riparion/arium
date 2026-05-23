@@ -7,14 +7,10 @@
 #![cfg(feature = "server")]
 
 #[cfg(all(feature = "sqlite", feature = "postgres"))]
-compile_error!(
-    "dx-auth: enable exactly one of the `sqlite` or `postgres` features, not both."
-);
+compile_error!("dx-auth: enable exactly one of the `sqlite` or `postgres` features, not both.");
 
 #[cfg(not(any(feature = "sqlite", feature = "postgres")))]
-compile_error!(
-    "dx-auth: enable one of the `sqlite` or `postgres` features."
-);
+compile_error!("dx-auth: enable one of the `sqlite` or `postgres` features.");
 
 #[cfg(feature = "sqlite")]
 pub type Pool = sqlx::SqlitePool;

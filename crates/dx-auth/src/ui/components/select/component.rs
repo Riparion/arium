@@ -19,7 +19,9 @@ struct Styles;
 
 #[component]
 pub fn Select<T: Clone + PartialEq + 'static>(props: SelectProps<T>) -> Element {
-    let base = attributes!(div { class: Styles::dx_select });
+    let base = attributes!(div {
+        class: Styles::dx_select
+    });
     let merged = merge_attributes(vec![base, props.attributes]);
 
     rsx! {
@@ -55,7 +57,9 @@ pub fn Select<T: Clone + PartialEq + 'static>(props: SelectProps<T>) -> Element 
 
 #[component]
 pub fn SelectMulti<T: Clone + PartialEq + 'static>(props: SelectMultiProps<T>) -> Element {
-    let base = attributes!(div { class: Styles::dx_select });
+    let base = attributes!(div {
+        class: Styles::dx_select
+    });
     let merged = merge_attributes(vec![base, props.attributes]);
 
     rsx! {
@@ -91,7 +95,9 @@ pub fn SelectMulti<T: Clone + PartialEq + 'static>(props: SelectMultiProps<T>) -
 
 #[component]
 pub fn SelectGroupLabel(props: SelectGroupLabelProps) -> Element {
-    let base = attributes!(div { class: Styles::dx_select_group_label });
+    let base = attributes!(div {
+        class: Styles::dx_select_group_label
+    });
     let merged = merge_attributes(vec![base, props.attributes]);
 
     rsx! {
@@ -106,7 +112,9 @@ pub fn SelectGroupLabel(props: SelectGroupLabelProps) -> Element {
 
 #[component]
 pub fn SelectOption<T: Clone + PartialEq + 'static>(props: SelectOptionProps<T>) -> Element {
-    let base = attributes!(div { class: Styles::dx_select_option });
+    let base = attributes!(div {
+        class: Styles::dx_select_option
+    });
     let merged = merge_attributes(vec![base, props.attributes]);
 
     rsx! {

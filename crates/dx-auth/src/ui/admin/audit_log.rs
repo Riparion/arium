@@ -9,16 +9,12 @@ use crate::ui::components::label::Label;
 use crate::ui::components::virtual_list::VirtualList;
 use crate::wire::{AuditEventView, AuditQuery};
 
-const ADMIN_CSS: Asset = asset!(
-    "/src/ui/admin/style.css",
-    AssetOptions::css_module()
-);
+const ADMIN_CSS: Asset = asset!("/src/ui/admin/style.css", AssetOptions::css_module());
 
 #[css_module("/src/ui/admin/style.css")]
 struct Styles;
 
-const AUDIT_COLUMNS: &str =
-    "--data-cols: minmax(10rem, 1.25fr) minmax(10rem, 1.25fr) minmax(8rem, 1fr) minmax(8rem, 1fr) minmax(6rem, 0.75fr) minmax(8rem, 1.5fr);";
+const AUDIT_COLUMNS: &str = "--data-cols: minmax(10rem, 1.25fr) minmax(10rem, 1.25fr) minmax(8rem, 1fr) minmax(8rem, 1fr) minmax(6rem, 0.75fr) minmax(8rem, 1.5fr);";
 
 /// Filterable, paginated audit-log table. Requires `admin:audit:read`
 /// on the signed-in user; the server fn enforces this and the table
@@ -44,9 +40,8 @@ pub fn AuditLog() -> Element {
         offset: 0,
     });
 
-    let events = use_resource(move || async move {
-        admin_query_audit_events(applied.read().clone()).await
-    });
+    let events =
+        use_resource(move || async move { admin_query_audit_events(applied.read().clone()).await });
 
     let mut apply = move |_| {
         let actor = actor_id.read().parse::<i64>().ok();

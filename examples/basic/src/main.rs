@@ -17,11 +17,11 @@ use dx_auth::ui::components::input::Input;
 use dx_auth::ui::components::label::Label;
 use dx_auth::ui::components::tabs::{TabContent, TabList, TabTrigger, Tabs};
 use dx_auth::ui::{
-    use_oauth_providers, use_permissions, ForgotPassword, LoginPanel, LoginSubmit,
-    OAuthProvidersProvider, PermissionGate, PermissionsProvider, Policy, RequirePermission,
-    ResetPassword, SubmitKind, VerifyEmail,
+    ForgotPassword, LoginPanel, LoginSubmit, OAuthProvidersProvider, PermissionGate,
+    PermissionsProvider, Policy, RequirePermission, ResetPassword, SubmitKind, VerifyEmail,
+    use_oauth_providers, use_permissions,
 };
-use dx_auth::{friendly_server_error, LoginOutcome, MfaSetupView, MfaStatusView, UserProfile};
+use dx_auth::{LoginOutcome, MfaSetupView, MfaStatusView, UserProfile, friendly_server_error};
 
 const THEME_CSS: Asset = asset!("/assets/dx-components-theme.css");
 const APP_CSS: Asset = asset!("/assets/app.css");
@@ -145,7 +145,12 @@ fn Home() -> Element {
 
     let on_login_submit = move |submission: LoginSubmit| {
         auth_error.set(String::new());
-        let LoginSubmit { kind, email, password, remember } = submission;
+        let LoginSubmit {
+            kind,
+            email,
+            password,
+            remember,
+        } = submission;
         let email_for_pending = email.clone();
         spawn(async move {
             let result = match kind {
@@ -246,7 +251,10 @@ fn Home() -> Element {
 
 #[component]
 fn ProfileCard(profile: UserProfile) -> Element {
-    let display_name = profile.name.clone().unwrap_or_else(|| profile.username.clone());
+    let display_name = profile
+        .name
+        .clone()
+        .unwrap_or_else(|| profile.username.clone());
     let handle = profile.username.clone();
     let avatar_url = profile.avatar_url.clone();
     let email = profile.email.clone();

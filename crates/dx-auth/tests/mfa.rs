@@ -101,7 +101,11 @@ async fn verify_challenge_accepts_valid_totp() {
         .unwrap();
 
     let code = common::current_totp(&info.secret_base32);
-    assert!(auth::verify_mfa_challenge(&pool, user_id, &code).await.unwrap());
+    assert!(
+        auth::verify_mfa_challenge(&pool, user_id, &code)
+            .await
+            .unwrap()
+    );
 }
 
 #[tokio::test]
@@ -115,12 +119,16 @@ async fn verify_challenge_rejects_garbage_code() {
         .await
         .unwrap();
 
-    assert!(!auth::verify_mfa_challenge(&pool, user_id, "000000")
-        .await
-        .unwrap());
-    assert!(!auth::verify_mfa_challenge(&pool, user_id, "nope")
-        .await
-        .unwrap());
+    assert!(
+        !auth::verify_mfa_challenge(&pool, user_id, "000000")
+            .await
+            .unwrap()
+    );
+    assert!(
+        !auth::verify_mfa_challenge(&pool, user_id, "nope")
+            .await
+            .unwrap()
+    );
 }
 
 #[tokio::test]
@@ -135,9 +143,17 @@ async fn recovery_code_is_single_use() {
         .unwrap();
 
     let code = info.recovery_codes[0].clone();
-    assert!(auth::verify_mfa_challenge(&pool, user_id, &code).await.unwrap());
+    assert!(
+        auth::verify_mfa_challenge(&pool, user_id, &code)
+            .await
+            .unwrap()
+    );
     // Second attempt must fail.
-    assert!(!auth::verify_mfa_challenge(&pool, user_id, &code).await.unwrap());
+    assert!(
+        !auth::verify_mfa_challenge(&pool, user_id, &code)
+            .await
+            .unwrap()
+    );
 
     // And the row is marked used_at != NULL.
     let used: Option<(Option<i64>,)> = sqlx::query_as(
@@ -147,7 +163,10 @@ async fn recovery_code_is_single_use() {
     .fetch_optional(&pool)
     .await
     .unwrap();
-    assert!(used.is_some(), "consumed recovery code must have used_at set");
+    assert!(
+        used.is_some(),
+        "consumed recovery code must have used_at set"
+    );
 }
 
 #[tokio::test]
@@ -192,22 +211,20 @@ async fn disable_mfa_wipes_secret_and_recovery_codes() {
         auth::mfa_status(&pool, user_id).await.unwrap(),
         MfaStatus::Disabled,
     );
-    let leftover: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM mfa_recovery_codes WHERE user_id = $1",
-    )
-    .bind(user_id)
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    let leftover: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM mfa_recovery_codes WHERE user_id = $1")
+            .bind(user_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     assert_eq!(leftover, 0, "disable must drop every recovery code");
 
-    let row: (Option<String>, Option<i64>) = sqlx::query_as(
-        "SELECT mfa_secret, mfa_enabled_at FROM users WHERE id = $1",
-    )
-    .bind(user_id)
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    let row: (Option<String>, Option<i64>) =
+        sqlx::query_as("SELECT mfa_secret, mfa_enabled_at FROM users WHERE id = $1")
+            .bind(user_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     assert!(row.0.is_none(), "mfa_secret must be NULL after disable");
     assert!(row.1.is_none(), "mfa_enabled_at must be NULL after disable");
 }
@@ -241,16 +258,17 @@ async fn resetup_on_enrolled_account_reverts_to_pending_and_rotates_codes() {
     // single old code is enough — Argon2 verifies are deliberately slow,
     // and the invariant is "setup wiped the set", not "every individual
     // string fails its own hash".
-    assert!(!auth::verify_mfa_challenge(&pool, user_id, &first.recovery_codes[0])
-        .await
-        .unwrap());
-    let leftover_old: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM mfa_recovery_codes WHERE user_id = $1",
-    )
-    .bind(user_id)
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    assert!(
+        !auth::verify_mfa_challenge(&pool, user_id, &first.recovery_codes[0])
+            .await
+            .unwrap()
+    );
+    let leftover_old: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM mfa_recovery_codes WHERE user_id = $1")
+            .bind(user_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     // 10 new rows, 0 old rows — proves the wipe at the schema level.
     assert_eq!(leftover_old, 10);
 }
@@ -261,7 +279,9 @@ async fn verify_challenge_on_user_without_mfa_returns_false() {
     // who never enrolled, we don't crash and we don't return true.
     let pool = common::pool().await;
     let user_id = common::make_user(&pool, "joe@example.com", "hunter22!").await;
-    assert!(!auth::verify_mfa_challenge(&pool, user_id, "000000")
-        .await
-        .unwrap());
+    assert!(
+        !auth::verify_mfa_challenge(&pool, user_id, "000000")
+            .await
+            .unwrap()
+    );
 }

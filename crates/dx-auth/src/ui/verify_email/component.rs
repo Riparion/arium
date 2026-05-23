@@ -7,10 +7,8 @@ use crate::ui::components::card::{Card, CardContent, CardHeader, CardTitle};
 // render a `document::Stylesheet` and guarantee the link tag is in the page on every
 // render (the css_module macro's OnceLock-based injection only fires on the first SSR
 // request).
-const VERIFY_EMAIL_CSS: Asset = asset!(
-    "/src/ui/verify_email/style.css",
-    AssetOptions::css_module()
-);
+const VERIFY_EMAIL_CSS: Asset =
+    asset!("/src/ui/verify_email/style.css", AssetOptions::css_module());
 
 #[css_module("/src/ui/verify_email/style.css")]
 struct Styles;

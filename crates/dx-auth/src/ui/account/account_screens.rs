@@ -10,9 +10,7 @@ async fn dismiss_after(duration: std::time::Duration) {
         let _ = duration;
     }
 }
-use crate::server::{
-    change_password, delete_my_account, get_account_view, update_display_name,
-};
+use crate::server::{change_password, delete_my_account, get_account_view, update_display_name};
 use crate::ui::components::button::{Button, ButtonVariant};
 use crate::ui::components::card::{Card, CardContent, CardDescription, CardHeader, CardTitle};
 use crate::ui::components::input::Input;

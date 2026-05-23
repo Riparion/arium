@@ -119,7 +119,10 @@ async fn password_hash_is_argon2_and_round_trips() {
     let pool = common::pool().await;
     let user_id = common::make_user(&pool, "gina@example.com", "hunter22!").await;
 
-    let stored = auth::get_password_hash(&pool, user_id).await.unwrap().unwrap();
+    let stored = auth::get_password_hash(&pool, user_id)
+        .await
+        .unwrap()
+        .unwrap();
     assert!(
         stored.starts_with("$argon2"),
         "expected an Argon2 PHC string, got prefix {:?}",

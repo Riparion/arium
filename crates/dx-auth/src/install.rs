@@ -7,10 +7,10 @@
 
 #![cfg(feature = "server")]
 
+use crate::pool::SessionPool;
 use axum::Router;
 use axum_session::{SessionConfig, SessionLayer, SessionStore};
 use axum_session_auth::AuthConfig as AxumAuthConfig;
-use crate::pool::SessionPool;
 
 use crate::auth::AuthLayer;
 use crate::config::AuthConfig;

@@ -176,12 +176,11 @@ pub async fn upsert_oauth_user(
 
     // 2) Email matches an existing local account → link rather than duplicate.
     if let Some(email) = profile.email.as_deref() {
-        let matched: Option<(i64,)> = sqlx::query_as(
-            "SELECT id FROM users WHERE LOWER(email) = LOWER($1) LIMIT 1",
-        )
-        .bind(email)
-        .fetch_optional(db)
-        .await?;
+        let matched: Option<(i64,)> =
+            sqlx::query_as("SELECT id FROM users WHERE LOWER(email) = LOWER($1) LIMIT 1")
+                .bind(email)
+                .fetch_optional(db)
+                .await?;
 
         if let Some((user_id,)) = matched {
             sqlx::query(
@@ -194,15 +193,13 @@ pub async fn upsert_oauth_user(
             .execute(db)
             .await?;
 
-            sqlx::query(
-                "UPDATE users SET name = $1, avatar_url = $2, html_url = $3 WHERE id = $4",
-            )
-            .bind(profile.name.as_deref())
-            .bind(profile.avatar_url.as_deref())
-            .bind(profile.html_url.as_deref())
-            .bind(user_id)
-            .execute(db)
-            .await?;
+            sqlx::query("UPDATE users SET name = $1, avatar_url = $2, html_url = $3 WHERE id = $4")
+                .bind(profile.name.as_deref())
+                .bind(profile.avatar_url.as_deref())
+                .bind(profile.html_url.as_deref())
+                .bind(user_id)
+                .execute(db)
+                .await?;
 
             return Ok(user_id);
         }

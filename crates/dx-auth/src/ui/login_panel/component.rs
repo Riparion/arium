@@ -9,10 +9,7 @@ use crate::ui::components::label::Label;
 /// render a `document::Stylesheet` and guarantee the link tag is in the page even when the
 /// LoginPanel first mounts client-side (the css_module's OnceLock + queue_effect path
 /// doesn't reliably insert the link during post-hydration mounts).
-const LOGIN_PANEL_CSS: Asset = asset!(
-    "/src/ui/login_panel/style.css",
-    AssetOptions::css_module()
-);
+const LOGIN_PANEL_CSS: Asset = asset!("/src/ui/login_panel/style.css", AssetOptions::css_module());
 
 #[css_module("/src/ui/login_panel/style.css")]
 struct Styles;
@@ -91,8 +88,16 @@ pub fn LoginPanel(
 
     let is_signup = mode() == SubmitKind::SignUp;
     let effective_title = if is_signup { signup_title } else { title };
-    let effective_description = if is_signup { signup_description } else { description };
-    let effective_submit_label = if is_signup { signup_submit_label } else { submit_label };
+    let effective_description = if is_signup {
+        signup_description
+    } else {
+        description
+    };
+    let effective_submit_label = if is_signup {
+        signup_submit_label
+    } else {
+        submit_label
+    };
     let toggle_prompt = if is_signup {
         "Already have an account?"
     } else {
@@ -274,11 +279,7 @@ pub fn LoginPanel(
 }
 
 #[component]
-fn ProviderLink(
-    name: String,
-    href: String,
-    icon_svg: Option<String>,
-) -> Element {
+fn ProviderLink(name: String, href: String, icon_svg: Option<String>) -> Element {
     rsx! {
         a {
             class: Styles::login_provider_button,

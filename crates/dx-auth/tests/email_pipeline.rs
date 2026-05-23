@@ -12,7 +12,7 @@
 mod common;
 
 use dx_auth::auth;
-use dx_auth::mail::{templates, Mailer};
+use dx_auth::mail::{Mailer, templates};
 use regex::Regex;
 
 /// RAII guard: change cwd for the duration of a test and restore at drop.

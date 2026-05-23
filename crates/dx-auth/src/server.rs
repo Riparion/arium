@@ -147,9 +147,10 @@ fn unix_now_seconds() -> i64 {
 /// Log out the current session.
 #[post("/api/user/logout", auth: auth::Session, db: DbExtension, audit: AuditCtx)]
 pub async fn logout() -> Result<()> {
-    let actor = auth.current_user.as_ref().and_then(|u| {
-        if u.anonymous { None } else { Some(u.id as i64) }
-    });
+    let actor = auth
+        .current_user
+        .as_ref()
+        .and_then(|u| if u.anonymous { None } else { Some(u.id as i64) });
     auth.logout_user();
     if let Some(id) = actor {
         audit
@@ -545,10 +546,7 @@ pub async fn begin_mfa_setup() -> Result<MfaSetupView> {
         return Err(ServerFnError::new("Not signed in.").into());
     }
 
-    let label = user
-        .email
-        .clone()
-        .unwrap_or_else(|| user.username.clone());
+    let label = user.email.clone().unwrap_or_else(|| user.username.clone());
 
     let info = auth::setup_mfa_secret(&db.0, user.id as i64, &label).await?;
     Ok(MfaSetupView {
@@ -656,7 +654,7 @@ async fn require_admin_perm(
         .requires(Rights::permission(perm.to_string()))
         .validate(user, &axum::http::Method::GET, Some(db))
         .await
-        .then(|| user.id as i64)
+        .then_some(user.id as i64)
         .ok_or_else(|| ServerFnError::new("You don't have permission for this action.").into())
 }
 
@@ -681,10 +679,7 @@ async fn summarise_admin_user(
 
 /// List users for the admin browser. Capped at 500 per request.
 #[get("/api/admin/users?limit&offset", auth: auth::Session, db: DbExtension)]
-pub async fn admin_list_users(
-    limit: i64,
-    offset: i64,
-) -> Result<Vec<AdminUserSummary>> {
+pub async fn admin_list_users(limit: i64, offset: i64) -> Result<Vec<AdminUserSummary>> {
     require_admin_perm(&auth, &db.0, "admin:users:read").await?;
     let rows = auth::list_users_for_admin(&db.0, limit, offset).await?;
     let mut summaries = Vec::with_capacity(rows.len());
@@ -717,16 +712,13 @@ pub async fn admin_get_user(user_id: i64) -> Result<Option<AdminUserDetail>> {
 
 /// Replace a user's full role list (admin).
 #[post("/api/admin/users/roles", auth: auth::Session, db: DbExtension, audit: AuditCtx)]
-pub async fn admin_set_user_roles(
-    user_id: i64,
-    role_ids: Vec<i64>,
-) -> Result<()> {
+pub async fn admin_set_user_roles(user_id: i64, role_ids: Vec<i64>) -> Result<()> {
     let actor_id = require_admin_perm(&auth, &db.0, "admin:users:write").await?;
-    let before = auth::get_user_role_ids(&db.0, user_id).await.unwrap_or_default();
+    let before = auth::get_user_role_ids(&db.0, user_id)
+        .await
+        .unwrap_or_default();
     auth::set_user_roles(&db.0, user_id, &role_ids).await?;
-    let details = format!(
-        "{{\"before\":{before:?},\"after\":{role_ids:?}}}"
-    );
+    let details = format!("{{\"before\":{before:?},\"after\":{role_ids:?}}}");
     audit
         .record(
             &db.0,
@@ -792,8 +784,7 @@ pub async fn admin_create_role(
     permissions: Vec<String>,
 ) -> Result<i64> {
     let actor_id = require_admin_perm(&auth, &db.0, "admin:roles:write").await?;
-    let role_id =
-        auth::create_role(&db.0, &name, description.as_deref(), &permissions).await?;
+    let role_id = auth::create_role(&db.0, &name, description.as_deref(), &permissions).await?;
     let details = format!(
         "{{\"name\":{},\"permissions\":{:?}}}",
         json_str(&name),
@@ -928,7 +919,11 @@ pub async fn update_display_name(new_name: String) -> Result<()> {
     }
     let id = user.id as i64;
     let trimmed = new_name.trim();
-    let value = if trimmed.is_empty() { None } else { Some(trimmed) };
+    let value = if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed)
+    };
     auth::update_display_name(&db.0, id, value).await?;
     audit
         .record(

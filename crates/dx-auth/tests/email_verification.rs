@@ -36,7 +36,9 @@ async fn consume_token_marks_account_verified() {
     let pool = common::pool().await;
     let user_id = fresh_unverified_user(&pool, "bob@example.com").await;
 
-    let token = auth::issue_verification_token(&pool, user_id).await.unwrap();
+    let token = auth::issue_verification_token(&pool, user_id)
+        .await
+        .unwrap();
     let returned = auth::consume_verification_token(&pool, &token)
         .await
         .unwrap();
@@ -53,8 +55,12 @@ async fn consume_invalidates_all_outstanding_tokens_for_same_user() {
     let pool = common::pool().await;
     let user_id = fresh_unverified_user(&pool, "carol@example.com").await;
 
-    let t1 = auth::issue_verification_token(&pool, user_id).await.unwrap();
-    let t2 = auth::issue_verification_token(&pool, user_id).await.unwrap();
+    let t1 = auth::issue_verification_token(&pool, user_id)
+        .await
+        .unwrap();
+    let t2 = auth::issue_verification_token(&pool, user_id)
+        .await
+        .unwrap();
     assert_ne!(t1, t2);
 
     auth::consume_verification_token(&pool, &t1).await.unwrap();
@@ -71,7 +77,9 @@ async fn unknown_token_returns_none_not_error() {
     let pool = common::pool().await;
     fresh_unverified_user(&pool, "dan@example.com").await;
 
-    let result = auth::consume_verification_token(&pool, "deadbeef").await.unwrap();
+    let result = auth::consume_verification_token(&pool, "deadbeef")
+        .await
+        .unwrap();
     assert_eq!(result, None);
 }
 
@@ -94,7 +102,9 @@ async fn expired_token_returns_none() {
     .unwrap();
 
     assert_eq!(
-        auth::consume_verification_token(&pool, stale).await.unwrap(),
+        auth::consume_verification_token(&pool, stale)
+            .await
+            .unwrap(),
         None
     );
 
@@ -119,8 +129,12 @@ async fn find_unverified_user_id_flips_after_consume() {
         Some(user_id),
     );
 
-    let token = auth::issue_verification_token(&pool, user_id).await.unwrap();
-    auth::consume_verification_token(&pool, &token).await.unwrap();
+    let token = auth::issue_verification_token(&pool, user_id)
+        .await
+        .unwrap();
+    auth::consume_verification_token(&pool, &token)
+        .await
+        .unwrap();
 
     assert_eq!(
         auth::find_unverified_user_id(&pool, "frank@example.com")
@@ -147,10 +161,14 @@ async fn find_unverified_user_id_is_case_insensitive() {
 async fn verification_token_is_32_lowercase_hex_chars() {
     let pool = common::pool().await;
     let user_id = fresh_unverified_user(&pool, "hank@example.com").await;
-    let token = auth::issue_verification_token(&pool, user_id).await.unwrap();
+    let token = auth::issue_verification_token(&pool, user_id)
+        .await
+        .unwrap();
     assert_eq!(token.len(), 32);
     assert!(
-        token.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
+        token
+            .chars()
+            .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
         "token {token:?} should be lowercase hex",
     );
 }

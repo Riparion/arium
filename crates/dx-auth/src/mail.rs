@@ -13,9 +13,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use lettre::{
+    AsyncTransport, Message, Tokio1Executor,
     message::{Mailbox, MultiPart, SinglePart, header::ContentType},
     transport::smtp::{AsyncSmtpTransport, authentication::Credentials},
-    AsyncTransport, Message, Tokio1Executor,
 };
 
 /// Default SMTP submission port used when `SMTP_PORT` is unset.
@@ -65,8 +65,8 @@ impl Mailer {
                 let user = std::env::var("SMTP_USER").unwrap_or_default();
                 let password = std::env::var("SMTP_PASSWORD").unwrap_or_default();
 
-                let mut builder = AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&host)?
-                    .port(port);
+                let mut builder =
+                    AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&host)?.port(port);
                 if !user.is_empty() {
                     builder = builder.credentials(Credentials::new(user, password));
                 }

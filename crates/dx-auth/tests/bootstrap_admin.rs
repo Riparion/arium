@@ -109,14 +109,13 @@ async fn sync_bootstrap_admin_promotes_a_preexisting_user_idempotently() {
 
     // Running it again is a no-op (idempotent — no duplicate row).
     auth::sync_bootstrap_admin(&pool).await.unwrap();
-    let count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM user_roles WHERE user_id = $1 AND role_id = $2",
-    )
-    .bind(target)
-    .bind(auth::role::ADMIN)
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    let count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM user_roles WHERE user_id = $1 AND role_id = $2")
+            .bind(target)
+            .bind(auth::role::ADMIN)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     assert_eq!(count, 1);
 }
 
@@ -136,10 +135,12 @@ async fn self_recovery_after_last_admin_is_soft_deleted() {
     let pool = common::pool().await;
 
     let first = common::make_user(&pool, "first@example.com", "hunter22!").await;
-    assert!(auth::get_user_role_ids(&pool, first)
-        .await
-        .unwrap()
-        .contains(&auth::role::ADMIN));
+    assert!(
+        auth::get_user_role_ids(&pool, first)
+            .await
+            .unwrap()
+            .contains(&auth::role::ADMIN)
+    );
 
     // Soft-delete clears `user_roles` so there's now zero admins.
     auth::soft_delete_user(&pool, first).await.unwrap();

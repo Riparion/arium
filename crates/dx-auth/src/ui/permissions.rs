@@ -21,8 +21,8 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use dioxus::prelude::*;
 use dioxus::CapturedError;
+use dioxus::prelude::*;
 
 use crate::server::get_current_user_profile;
 use crate::wire::UserProfile;
@@ -98,7 +98,11 @@ pub fn PermissionsProvider(children: Element) -> Element {
         Some(_) => Phase::Ready,
     });
 
-    use_context_provider(|| PermissionsCtx { profile, set, phase });
+    use_context_provider(|| PermissionsCtx {
+        profile,
+        set,
+        phase,
+    });
 
     rsx! {
         super::AuthStylesheets {}
@@ -267,14 +271,10 @@ impl Policy {
             return false;
         }
         let scope = self.scope.as_deref();
-        if !self.any_of.is_empty()
-            && !self.any_of.iter().any(|t| set.has(&scoped(scope, t)))
-        {
+        if !self.any_of.is_empty() && !self.any_of.iter().any(|t| set.has(&scoped(scope, t))) {
             return false;
         }
-        if !self.all_of.is_empty()
-            && !self.all_of.iter().all(|t| set.has(&scoped(scope, t)))
-        {
+        if !self.all_of.is_empty() && !self.all_of.iter().all(|t| set.has(&scoped(scope, t))) {
             return false;
         }
         true

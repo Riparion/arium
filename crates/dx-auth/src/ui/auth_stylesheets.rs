@@ -74,10 +74,7 @@ const SKELETON_CSS: Asset = asset!(
 );
 // virtual_list ships only inline styles — its style.css is comment-only,
 // which manganis's css_module parser refuses. Nothing to pin here.
-const LOGIN_PANEL_CSS: Asset = asset!(
-    "/src/ui/login_panel/style.css",
-    AssetOptions::css_module()
-);
+const LOGIN_PANEL_CSS: Asset = asset!("/src/ui/login_panel/style.css", AssetOptions::css_module());
 #[cfg(feature = "mail")]
 const FORGOT_PASSWORD_CSS: Asset = asset!(
     "/src/ui/forgot_password/style.css",
@@ -88,10 +85,8 @@ const RESET_PASSWORD_CSS: Asset = asset!(
     "/src/ui/reset_password/style.css",
     AssetOptions::css_module()
 );
-const VERIFY_EMAIL_CSS: Asset = asset!(
-    "/src/ui/verify_email/style.css",
-    AssetOptions::css_module()
-);
+const VERIFY_EMAIL_CSS: Asset =
+    asset!("/src/ui/verify_email/style.css", AssetOptions::css_module());
 
 /// Emits `document::Stylesheet` link tags for every catalog widget and
 /// drop-in auth route the library ships. Rendered by

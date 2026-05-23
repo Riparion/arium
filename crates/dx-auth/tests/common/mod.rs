@@ -11,8 +11,8 @@
 
 use std::path::PathBuf;
 
-use sqlx::sqlite::SqlitePoolOptions;
 use sqlx::SqlitePool;
+use sqlx::sqlite::SqlitePoolOptions;
 
 /// Build a fresh in-memory sqlite pool with the dx-auth schema applied.
 ///
@@ -62,9 +62,7 @@ async fn run_migrations(pool: &SqlitePool) {
             sqlx::query(trimmed)
                 .execute(pool)
                 .await
-                .unwrap_or_else(|e| {
-                    panic!("migrate {} ({trimmed}): {e}", path.display())
-                });
+                .unwrap_or_else(|e| panic!("migrate {} ({trimmed}): {e}", path.display()));
         }
     }
 }
@@ -100,8 +98,8 @@ pub fn current_totp(secret_base32: &str) -> String {
     let bytes = Secret::Encoded(secret_base32.to_string())
         .to_bytes()
         .expect("decode secret");
-    let totp = TOTP::new(Algorithm::SHA1, 6, 1, 30, bytes, None, "".to_string())
-        .expect("totp construct");
+    let totp =
+        TOTP::new(Algorithm::SHA1, 6, 1, 30, bytes, None, "".to_string()).expect("totp construct");
     totp.generate_current().expect("totp generate")
 }
 

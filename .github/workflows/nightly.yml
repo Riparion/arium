@@ -1,0 +1,117 @@
+name: nightly
+
+# Slow / advisory-only hardening jobs. These don't need to run on every
+# PR — they exist to surface drift (new advisories, new outdated deps,
+# new unsafe in the dep tree) on a schedule.
+#
+# All jobs are `continue-on-error: true` — this workflow's red badge is
+# informational, not a merge gate.
+
+on:
+  schedule:
+    # 04:00 UTC every day. New RustSec advisories land independently of
+    # our PR cadence, so a daily heartbeat is the right cadence.
+    - cron: "0 4 * * *"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUST_BACKTRACE: short
+
+jobs:
+  # Re-run the advisory DB against Cargo.lock daily so a freshly-landed
+  # advisory shows up here even when no PR is open.
+  audit:
+    name: cargo audit
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: rustsec/audit-check@v2.0.0
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  # Surface deps that have a newer compatible release.
+  outdated:
+    name: cargo outdated
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: nightly
+      - run: cargo install --locked cargo-outdated
+      - run: cargo outdated --workspace --depth 1 --exit-code 0
+
+  # Count unsafe in the dep tree. Useful to spot a new transitive that
+  # pulled in a big block of unsafe code.
+  geiger:
+    name: cargo geiger
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: nightly
+      - run: cargo install --locked cargo-geiger
+      - run: cargo geiger --package dx-auth --all-features
+
+  # Full-history secret scan. Slower than the per-PR gitleaks step in
+  # ci.yml — that one scans the diff, this one re-scans every commit so a
+  # secret rotated into history doesn't slip past unnoticed.
+  trufflehog:
+    name: trufflehog (full history)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          extra_args: --only-verified
+
+  # Fuzz: not enabled yet — no fuzz targets exist in the repo.
+  # When `cargo fuzz add wire_parse` (and friends) lands, uncomment this
+  # and budget each target ~10–15 minutes.
+  #
+  # fuzz:
+  #   name: cargo fuzz (time-budgeted)
+  #   runs-on: ubuntu-latest
+  #   continue-on-error: true
+  #   strategy:
+  #     fail-fast: false
+  #     matrix:
+  #       target: [wire_parse, oauth_callback]
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - uses: dtolnay/rust-toolchain@nightly
+  #     - run: cargo install --locked cargo-fuzz
+  #     - run: cargo fuzz run ${{ matrix.target }} -- -max_total_time=600
+
+  # ZAP baseline against examples/basic: not enabled yet — needs the
+  # example to boot in CI with a known port + a seeded test user. Wire
+  # that up (a `cargo run -p basic &` step + readiness probe) before
+  # uncommenting.
+  #
+  # zap:
+  #   name: OWASP ZAP baseline (examples/basic)
+  #   runs-on: ubuntu-latest
+  #   continue-on-error: true
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - uses: dtolnay/rust-toolchain@stable
+  #     - name: Boot examples/basic
+  #       run: |
+  #         cargo run -p basic &
+  #         # TODO: replace with a real readiness probe
+  #         sleep 30
+  #     - uses: zaproxy/action-baseline@v0.12.0
+  #       with:
+  #         target: "http://localhost:8080"

@@ -88,4 +88,61 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: ci
-      - run: cargo clippy --package dx-auth --all-targets -- -D warnings
+      # Security-leaning lints in addition to the default warning set.
+      # Panics / unwraps / slicing in request paths are real DoS findings
+      # for an auth crate.
+      - run: |
+          cargo clippy --package dx-auth --all-targets -- \
+            -D warnings \
+            -W clippy::unwrap_used \
+            -W clippy::expect_used \
+            -W clippy::panic \
+            -W clippy::indexing_slicing \
+            -W clippy::integer_arithmetic
+
+  # RustSec advisory database check against Cargo.lock. New advisories
+  # land outside our PRs, so the nightly workflow also runs this.
+  audit:
+    name: cargo audit (advisory)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: rustsec/audit-check@v2.0.0
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  # License / source / bans policy enforcement. Configured in deny.toml.
+  deny:
+    name: cargo deny (advisory)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
+          arguments: --all-features
+
+  # Unused dependency detection.
+  unused-deps:
+    name: cargo machete (advisory)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: bnjbvr/cargo-machete@main
+
+  # Secret scan on the diff for every PR, and full repo on push to main.
+  # Free for personal/public repos; orgs need a GITLEAKS_LICENSE secret.
+  secrets:
+    name: gitleaks (advisory)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

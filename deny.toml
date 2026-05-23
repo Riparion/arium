@@ -1,0 +1,56 @@
+# cargo-deny configuration.
+#
+# Run `cargo deny check` locally before pushing. CI runs the same in
+# advisory mode (continue-on-error: true) until the policy is clean —
+# flip the job to gating once it passes.
+
+[graph]
+# Match what consumers actually compile with. Keep this `false` and
+# scope feature-specific checks via the CLI if you need them.
+all-features = false
+
+[advisories]
+version = 2
+yanked = "deny"
+ignore = []
+
+[licenses]
+version = 2
+# Permissive licenses we accept by default. Add to this list rather than
+# silently allowing an unknown license — every entry here is a decision.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-DFS-2016",
+    "Unicode-3.0",
+    "CC0-1.0",
+    "Zlib",
+    "MPL-2.0",
+    "0BSD",
+    "OpenSSL",
+]
+confidence-threshold = 0.9
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+# Add specific crates to deny here as they come up — e.g. an unmaintained
+# fork or a copy-left transitive that slipped in.
+deny = []
+skip = []
+skip-tree = []
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+# The only git dep at the time of writing is the Dioxus components
+# catalog. Add to this list (with the explicit https URL) when pulling in
+# a new git source — never widen to a whole org.
+allow-git = [
+    "https://github.com/DioxusLabs/components",
+]

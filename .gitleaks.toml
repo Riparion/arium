@@ -1,0 +1,19 @@
+# gitleaks configuration.
+#
+# Inherits the upstream default ruleset; only customisation is the
+# allowlist below.
+[extend]
+useDefault = true
+
+[allowlist]
+description = """
+Test-fixture tokens that look like high-entropy secrets to the
+'generic-api-key' heuristic but are deliberately recognisable
+constant inputs used to exercise email-template width checks
+(see crates/dx-auth/tests/email_pipeline.rs).
+"""
+regexes = [
+  # Exact 32-hex literal used in the password-reset / email-verify
+  # template width tests. Recognisable on sight — not a real secret.
+  '''00112233445566778899aabbccddeeff''',
+]

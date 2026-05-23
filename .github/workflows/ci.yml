@@ -61,8 +61,8 @@ jobs:
             --features "${{ matrix.features }}"
 
   # ---------------------------------------------------------------
-  # Advisory jobs — don't gate merges yet. The repo isn't fmt/clippy-clean
-  # today; flip `continue-on-error: false` once it is.
+  # Advisory job — doesn't gate merges. The repo isn't fmt-clean today;
+  # flip `continue-on-error: false` once it is.
   # ---------------------------------------------------------------
 
   fmt:
@@ -113,9 +113,8 @@ jobs:
   # `cargo audit --json --file ./Cargo.lock` step with "entity not
   # found", which looks like a cwd bug in the action itself.
   audit:
-    name: cargo audit (advisory)
+    name: cargo audit
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -129,11 +128,9 @@ jobs:
   # Gating: deny.toml is curated; a failure here means a new transitive
   # introduced a license / source we haven't reviewed.
   #
-  # We deliberately skip the `advisories` check here — that category
-  # tracks an upstream-controlled moving target, and gating on it would
-  # mean any fresh advisory in the RustSec DB blocks every PR until
-  # someone bumps a dep. Advisories are owned by the (advisory) `audit`
-  # job below, which uses cargo-audit directly.
+  # We deliberately skip the `advisories` check here — advisory triage
+  # is owned by the dedicated `audit` job above, which uses cargo-audit
+  # directly and honors the curated ignore list in `.cargo/audit.toml`.
   deny:
     name: cargo deny
     runs-on: ubuntu-latest

@@ -92,6 +92,11 @@ Gating (a failure blocks the merge):
   enforcement against `Cargo.lock`. Advisories are deliberately
   excluded here (see the `audit` job below) so an upstream-controlled
   moving target doesn't block PRs.
+- `cargo audit` — RustSec advisory database against `Cargo.lock`.
+  One curated ignore lives in [`.cargo/audit.toml`](.cargo/audit.toml),
+  each entry justified inline with a reachability argument and a
+  pointer to the standup card tracking re-evaluation.
+- `cargo machete` — unused dependency detection.
 - `gitleaks detect --source . --redact` — secret scan of the full
   repo + history. Invoked via the official binary, not the
   marketplace action (the action's license check is flaky for
@@ -102,11 +107,6 @@ Gating (a failure blocks the merge):
 Advisory (`continue-on-error: true` — a failure shows red on the job
 but doesn't block):
 
-- `cargo audit` — RustSec advisory database against `Cargo.lock`.
-  Owned here because advisories are upstream-controlled; CI shouldn't
-  fall over every time a fresh CVE lands while a fix is being
-  triaged.
-- `cargo machete` — unused dependency detection.
 - `cargo fmt --check` — formatting.
 
 **Nightly — `.github/workflows/nightly.yml`**
@@ -123,6 +123,9 @@ but doesn't block):
   rationale; explicit `allow-git` per source (no wildcard org trust);
   `yanked = "deny"`; `allow-wildcard-paths = true` for internal
   workspace members only.
+- [`.cargo/audit.toml`](.cargo/audit.toml) — RustSec ignores, each
+  entry annotated with the reachability argument that justifies it
+  and a pointer to the standup card tracking re-evaluation.
 - [`.gitleaks.toml`](.gitleaks.toml) — extends the upstream default
   ruleset with an allowlist for one recognisable test-fixture hex
   literal used to exercise email-template width checks.
@@ -146,11 +149,10 @@ but doesn't block):
 - The development-mode email backend writes `.eml` files to disk for
   inspection — never enable it in production (the `MAIL_*` env vars
   drive the production SMTP backend instead).
-- Two open RustSec advisories surface in the `cargo audit` job:
-  - `RUSTSEC-2023-0071` (`rsa 0.9.10`) — reachable only via
-    `sqlx-macros-core`'s compile-time backend support; not reachable
-    from a deployed SQLite-only or Postgres-only build.
-  - `RUSTSEC-2026-0009` (`time` pre-0.3.47) — affects RFC 2822 date
-    parsing of user-controlled input. `time` is pulled in
-    transitively via several Dioxus components.
-  Triage for both is in progress.
+- `RUSTSEC-2023-0071` (`rsa 0.9.10`, Marvin Attack) — reaches the
+  build graph only through `sqlx-macros-core`'s compile-time backend
+  support and is not reachable from a deployed SQLite-only or
+  Postgres-only build. Triaged, ignored in `.cargo/audit.toml` with
+  the reachability argument inline. No upstream fix exists yet;
+  recheck monthly via the nightly `cargo audit` and drop the ignore
+  the moment a fix ships.

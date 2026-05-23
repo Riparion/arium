@@ -1,5 +1,7 @@
 # Dioxus Full Stack Authentication
 
+![LoginPanel screenshot](examples/basic/screenshot.png)
+
 Reusable authentication library for [Dioxus 0.7](https://dioxuslabs.com)
 fullstack apps. Provides:
 

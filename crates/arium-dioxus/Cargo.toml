@@ -38,7 +38,6 @@ tokens = ["arium?/tokens"]
 [dependencies]
 dioxus = { version = "0.7.9", features = ["fullstack", "router"] }
 arium-wire = { path = "../arium-wire" }
-serde = { version = "1.0.225", features = ["derive"] }
 anyhow = "1.0.98"
 dioxus-icons = { version = "0.1.0", default-features = false }
 dioxus-primitives = { git = "https://github.com/DioxusLabs/components", version = "0.0.1", default-features = false, optional = true }

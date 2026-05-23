@@ -35,8 +35,6 @@ variables, audit log, repo layout, and dev tips.
 
 ![LoginPanel screenshot](screenshot.png)
 
-See also: [MFA enrollment screenshot](screenshot_mfa.png).
-
 ## License
 
 Licensed under either of

@@ -16,6 +16,8 @@ pub mod admin;
 pub mod auth_stylesheets;
 #[cfg(feature = "mail")]
 pub mod forgot_password;
+#[cfg(feature = "mfa")]
+pub mod mfa;
 pub mod oauth_providers;
 pub mod permissions;
 pub mod require_auth;
@@ -29,6 +31,8 @@ pub use auth_stylesheets::AuthStylesheets;
 #[cfg(feature = "mail")]
 pub use forgot_password::ForgotPassword;
 pub use login_panel::{LoginPanel, LoginProvider, LoginSubmit, SubmitKind};
+#[cfg(feature = "mfa")]
+pub use mfa::{MfaChallenge, MfaSetup};
 pub use oauth_providers::{OAuthProvidersProvider, use_oauth_providers};
 pub use permissions::{
     PermissionGate, PermissionSet, PermissionsProvider, Policy, RequirePermission, UsePermissions,

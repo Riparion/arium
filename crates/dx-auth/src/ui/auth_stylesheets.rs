@@ -87,6 +87,8 @@ const RESET_PASSWORD_CSS: Asset = asset!(
 );
 const VERIFY_EMAIL_CSS: Asset =
     asset!("/src/ui/verify_email/style.css", AssetOptions::css_module());
+#[cfg(feature = "mfa")]
+const MFA_CSS: Asset = asset!("/src/ui/mfa/style.css", AssetOptions::css_module());
 
 /// Emits `document::Stylesheet` link tags for every catalog widget and
 /// drop-in auth route the library ships. Rendered by
@@ -117,6 +119,12 @@ pub fn AuthStylesheets() -> Element {
             rsx! {
                 document::Stylesheet { href: FORGOT_PASSWORD_CSS }
                 document::Stylesheet { href: RESET_PASSWORD_CSS }
+            }
+        }
+        {
+            #[cfg(feature = "mfa")]
+            rsx! {
+                document::Stylesheet { href: MFA_CSS }
             }
         }
     }

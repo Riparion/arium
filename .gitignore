@@ -10,6 +10,11 @@ Cargo.lock
 **/auth.db-shm
 **/emails/
 
+# Local secrets. SMTP creds, OAuth client secrets, the bootstrap-admin email,
+# anything else that lives in a per-environment dotenv file.
+.env
+.env.*
+
 # Personal scratch notes
 TODO.md
 TODO*.md

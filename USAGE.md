@@ -1,74 +1,230 @@
+# Using dx-auth
+
+A walkthrough of integrating `dx-auth` into a Dioxus 0.7 fullstack app.
+The companion to this document is `examples/basic/` — every pattern here
+is exercised there end-to-end.
+
 ## Getting started
 
-In your app's `Cargo.toml`:
+### 1. Cargo.toml
 
 ```toml
 [dependencies]
-dx-auth = { git = "https://github.com/<you>/dx-auth", default-features = false, features = ["server", "ui", "sqlite"] }
-dioxus  = { version = "0.7.9", features = ["fullstack", "router"] }
-sqlx    = { version = "0.8", features = ["runtime-tokio", "sqlite", "macros", "migrate"] }
+dioxus = { version = "0.7.9", features = ["fullstack", "router"] }
+
+# Capability features (ui, mail, oauth-github, mfa, ratelimit) need to
+# be on for BOTH the wasm/client and server builds so the
+# `#[cfg(feature = "...")]`-gated server-fn declarations are visible to
+# the dioxus macro on both sides. The actual server-only crates inside
+# dx-auth are already target-gated to non-wasm.
+#
+# IMPORTANT: `sqlite` (or `postgres`) is server-only — keep it OUT of
+# the default feature list and gate it behind your own `server`
+# feature. See "Common pitfalls" below.
+dx-auth = { version = "0.1", default-features = false, features = [
+  "ui",
+  "mail",
+  "oauth-github",
+  "mfa",
+  "ratelimit",
+] }
+
+# Direct deps the host needs
+axum  = { version = "0.8", optional = true }
+tokio = { version = "1",   features = ["full"], optional = true }
+sqlx  = { version = "0.8", features = ["runtime-tokio", "sqlite", "macros", "migrate"], optional = true }
+
+[features]
+default = ["web"]
+web     = ["dioxus/web"]
+server  = [
+  "dioxus/server",
+  "dep:axum", "dep:tokio", "dep:sqlx",
+  "dx-auth/server",
+  "dx-auth/sqlite",    # <-- gated behind YOUR server feature
+]
 ```
 
-Copy `crates/dx-auth/migrations/sqlite/*.sql` into your `migrations/`
-directory (rename-prefix if you collide with your own files) — then in
-your fullstack entry point:
+### 2. Server setup
+
+`dx_auth::migrator()` ships the schema (`users`, `oauth_accounts`,
+`roles`, `audit_events`, `api_keys`, …); compose it with your own
+migrator if you have one. `dx_auth::install` layers session + auth onto
+whatever `axum::Router` you hand it — merge any custom routes (SSE,
+websockets, REST) into the router *before* calling `install` so they
+inherit the session middleware.
 
 ```rust
-use dx_auth::{
-    AuthConfig, Mailer,
-    oauth::github::GithubProvider,
-    server::*,
-};
+fn main() {
+    #[cfg(not(feature = "server"))]
+    dioxus::launch(app);
 
-#[cfg(feature = "server")]
-dioxus::serve(|| async {
-    let pool = sqlx::sqlite::SqlitePoolOptions::new()
-        .connect_with("sqlite://./app.db?mode=rwc".parse()?)
-        .await?;
-    sqlx::migrate!().run(&pool).await?;     // your migrations + the ones you copied
+    #[cfg(feature = "server")]
+    dioxus::serve(|| async {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .connect_with("sqlite://./app.db?mode=rwc".parse()?)
+            .await?;
+        dx_auth::migrator().run(&pool).await?;
+        // your own migrator runs here if you have one
 
-    let builder = AuthConfig::builder(pool.clone(), Mailer::from_env()?);
-    let builder = match GithubProvider::from_env()? {
-        Some(gh) => builder.oauth_provider(gh),
-        None => builder,
-    };
+        let mailer = dx_auth::Mailer::from_env()?;
+        let mut builder = dx_auth::AuthConfig::builder(pool, mailer);
+        if let Some(gh) = dx_auth::oauth::github::GithubProvider::from_env()? {
+            builder = builder.oauth_provider(gh);
+        }
 
-    dx_auth::install(dioxus::server::router(app), builder.build()).await
-});
-```
+        let router = dioxus::server::router(app)
+            // .merge(my_sse_router)
+            // .layer(axum::Extension(my_app_state))
+            ;
 
-Then somewhere in your client-side UI — driven by what
-`available_providers` returns from the server, which means buttons
-appear / disappear based on which providers you registered above:
-
-```rust
-use dx_auth::ui::{LoginPanel, LoginProvider};
-use dx_auth::server::available_providers;
-
-let providers_resource = use_resource(available_providers);
-let providers: Vec<LoginProvider> = providers_resource()
-    .and_then(|r| r.ok())
-    .unwrap_or_default()
-    .into_iter()
-    .map(LoginProvider::from)        // ProviderInfo → LoginProvider
-    .collect();
-
-LoginPanel {
-    providers,
-    title: "Welcome back",
-    description: "Sign in to your workspace.",
-    forgot_href: "/auth/forgot",
-    on_submit: handler,
+        dx_auth::install(router, builder.build()).await
+    });
 }
 ```
 
-### Adding a new OAuth provider
+### 3. Client wiring
 
-Each provider is a struct that implements `dx_auth::oauth::OAuthProvider`.
-The trait is small — id/secret/URLs, scopes, and a `fetch_profile` that
-hits the provider's user-info endpoint and returns a
-`NormalizedProfile`. Add a `oauth-<name>` Cargo feature that enables the
-internal `_oauth-core` feature, drop a new module under
+Wrap the router in `PermissionsProvider` (always, even if you don't
+gate anything — it also pins the catalog widget stylesheets so the
+auth screens stay styled across mount cycles). Wrap that in
+`OAuthProvidersProvider` so the provider list is fetched once at the
+app root and survives login/logout transitions.
+
+```rust
+use dx_auth::ui::{OAuthProvidersProvider, PermissionsProvider};
+
+#[component]
+fn app() -> Element {
+    rsx! {
+        PermissionsProvider {
+            OAuthProvidersProvider {
+                Router::<Route> {}
+            }
+        }
+    }
+}
+```
+
+### 4. Smoke test
+
+```bash
+rm app.db && dx serve
+```
+
+Sign up with email + password. Without `SMTP_HOST` set, the
+verification email is written to `./emails/<timestamp>.eml`; open it in
+any mail client (or `cat`) to grab the link. For dev, you can skip the
+round-trip entirely with `DX_AUTH_SKIP_EMAIL_VERIFICATION=1 dx serve`.
+
+## Drop-in auth routes
+
+`dx-auth` ships ready-made screen components for every email- or
+session-driven flow. Wire them into your `Route` enum:
+
+```rust
+use dx_auth::ui::{
+    ForgotPassword, LoginPanel, MfaChallenge, MfaSetup, ResetPassword, VerifyEmail,
+};
+
+#[derive(Routable, Clone, PartialEq)]
+pub enum Route {
+    #[route("/")]                  Home,
+    #[route("/auth/forgot")]       ForgotPassword,
+    #[route("/auth/reset?:token")] ResetPassword { token: String },
+    #[route("/auth/verify?:token")] VerifyEmail { token: String },
+    #[route("/account/mfa")]       MfaSetup,
+    // ... your domain routes
+}
+```
+
+The default paths match `LoginPanel`'s baked-in `forgot_href` and the
+URLs the `mail` backend writes into outgoing emails. If you mount them
+somewhere else, override `LoginPanel { forgot_href: "..." }` and the
+mailer's link templates to match.
+
+Each screen calls its corresponding server fn under the hood:
+
+| Component | Server fn | Notes |
+| --- | --- | --- |
+| `LoginPanel` | `login_with_password` / `register_with_password` | The login card. Anonymous-accessible. |
+| `ForgotPassword` | `request_password_reset_email` | User-enumeration-safe; always shows the neutral "if an account exists…" message. |
+| `ResetPassword { token }` | `reset_password` | Confirms passwords match client-side. |
+| `VerifyEmail { token }` | `verify_email` | Fires on mount; renders pending / verified / expired states. |
+| `MfaChallenge` | `verify_login_mfa` | Post-password 6-digit prompt with recovery-code toggle. |
+| `MfaSetup` | `begin/confirm/disable_mfa_setup`, `get_mfa_status` | Enrollment + management screen for `/account/mfa`. |
+
+All components accept overridable `title` / `description` / `back_href`
+props for copy customization.
+
+### Login handler
+
+`login_with_password` returns one of three `LoginOutcome` variants — a
+login screen has to dispatch on all three:
+
+```rust
+use dx_auth::ui::{LoginPanel, LoginSubmit, MfaChallenge, SubmitKind, use_oauth_providers, use_permissions};
+use dx_auth::{LoginOutcome, friendly_server_error};
+use dx_auth::server::{cancel_mfa_challenge, login_with_password, register_with_password};
+
+#[component]
+fn Home() -> Element {
+    let perms = use_permissions();
+    let providers = use_oauth_providers();
+    let mut auth_error = use_signal(String::new);
+    let mut pending_email = use_signal::<Option<String>>(|| None);
+    let mut pending_mfa = use_signal(|| false);
+
+    let on_submit = move |s: LoginSubmit| {
+        let email_for_pending = s.email.clone();
+        spawn(async move {
+            let result = match s.kind {
+                SubmitKind::SignIn => login_with_password(s.email, s.password, s.remember).await,
+                SubmitKind::SignUp => register_with_password(s.email, s.password).await,
+            };
+            match result {
+                Ok(LoginOutcome::LoggedIn)       => perms.refresh(),
+                Ok(LoginOutcome::EmailUnverified) => pending_email.set(Some(email_for_pending)),
+                Ok(LoginOutcome::MfaRequired)    => pending_mfa.set(true),
+                Err(e) => auth_error.set(friendly_server_error(e)),
+            }
+        });
+    };
+
+    if perms.is_authenticated() {
+        rsx! { /* your authenticated UI */ }
+    } else if pending_mfa() {
+        rsx! {
+            MfaChallenge {
+                on_logged_in: move |_| { pending_mfa.set(false); perms.refresh(); },
+                on_cancel: move |_| {
+                    pending_mfa.set(false);
+                    spawn(async move { let _ = cancel_mfa_challenge().await; });
+                },
+            }
+        }
+    } else {
+        rsx! { LoginPanel { providers: providers.clone(), on_submit, /* … */ } }
+    }
+}
+```
+
+The full version is in `examples/basic/src/main.rs`.
+
+## OAuth providers
+
+GitHub ships in the box (feature `oauth-github`). `GithubProvider::from_env()`
+returns `Ok(None)` when `GITHUB_CLIENT_ID` or `GITHUB_CLIENT_SECRET` is
+unset — the routes simply aren't registered and `available_providers`
+returns an empty list, so the "Continue with GitHub" button hides
+itself.
+
+### Adding a new provider
+
+Implement `dx_auth::oauth::OAuthProvider` (id/secret/URLs, scopes, and
+a `fetch_profile` that hits the user-info endpoint and returns a
+`NormalizedProfile`). Add a `oauth-<name>` Cargo feature that enables
+the internal `_oauth-core` feature, drop a module under
 `crates/dx-auth/src/oauth/<name>.rs` mirroring `github.rs`, then
 register it on the builder:
 
@@ -76,39 +232,81 @@ register it on the builder:
 let builder = builder.oauth_provider(GoogleProvider::from_env()?.unwrap());
 ```
 
-`install` mounts `/auth/<name>/login` + `/auth/<name>/callback` for every
-registered provider automatically.
+`install` mounts `/auth/<name>/login` + `/auth/<name>/callback` for
+every registered provider automatically.
 
-`examples/basic/` shows the complete shape, including the ProfileCard,
-ForgotPassword / ResetPassword / VerifyEmail pages, and the MFA setup
-flow.
+## Writing server fns that read the current user
 
-## Gating UI by permission
-
-`dx-auth` resolves the current user's permission tokens (direct grants
-plus role-inherited ones) and ships them to the client on the
-`UserProfile`. Rather than every component re-fetching, wrap your
-router once in `PermissionsProvider`; downstream code uses the hook or
-gate components against the shared resource.
+`dx_auth::auth::Session` is an `axum_session_auth::AuthSession`
+extractor. Use it as the auth attribute on your own server fns, then
+read `auth.current_user`:
 
 ```rust
-use dx_auth::ui::{
-    PermissionsProvider, PermissionGate, RequirePermission, use_permissions,
-};
-
-fn app() -> Element {
-    rsx! {
-        PermissionsProvider {
-            Router::<Route> {}
-        }
+#[post("/api/cards/new", auth: dx_auth::auth::Session)]
+pub async fn create_card(board_id: i64, /* … */) -> Result<Card, ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        let user = auth.current_user.as_ref()
+            .filter(|u| !u.anonymous)            // dx-auth has a Guest user (id=1)
+            .ok_or_else(|| ServerFnError::new("not logged in"))?;
+        let user_id = user.id as i64;            // see pitfall below
+        // ... domain authz + DB work ...
     }
 }
 ```
 
+Plain axum handlers (SSE, REST) take the same type as a handler
+parameter:
+
+```rust
+pub async fn events_handler(
+    Path(board_id): Path<i64>,
+    State(state): State<AppState>,
+    auth: dx_auth::auth::Session,
+) -> Result<Sse<...>, StatusCode> { /* … */ }
+```
+
+## Permissions & RBAC
+
+`dx-auth` resolves the current user's permission tokens (direct grants
+plus role-inherited ones) and ships them to the client on the
+`UserProfile`. `PermissionsProvider` (set up in step 3 above) caches the
+result for the lifetime of the tree; everything below reads from that.
+
+### Route-level guards
+
+`RequireAuth` for "must be signed in" — pick the shape that fits the
+surrounding UX:
+
+```rust
+// Redirect on deny
+RequireAuth { redirect_to: "/login".to_string(), DashboardBody {} }
+
+// Inline fallback (avoids redirect flash; more robust under hydration)
+RequireAuth { fallback: rsx! { Login {} }, DashboardBody {} }
+```
+
+`RequirePermission` for role-aware checks. While the profile is still
+loading it renders nothing (no content flash); on failure it calls
+`Navigator::replace(redirect_to)` so the denied page can't be
+back-buttoned into:
+
+```rust
+RequirePermission {
+    token: "admin:users:read".to_string(),
+    redirect_to: "/".to_string(),
+    AdminUsersBody {}
+}
+```
+
+`RequirePermission` with no `token`/`any_of`/`all_of` builds an empty
+policy that **fails closed** — reach for `RequireAuth` when you just
+need "user must be signed in."
+
 ### Element-level pruning
 
 `PermissionGate` renders its children only when the check passes.
-Provide exactly one of `token`, `any_of`, or `all_of`:
+Provide exactly one of `token`, `any_of`, `all_of`, or `policy`:
 
 ```rust
 PermissionGate {
@@ -128,107 +326,39 @@ PermissionGate {
 }
 ```
 
-### Route-level guard
-
-`RequirePermission` is the same check at route scope. While the
-profile is still loading it renders nothing (no content flash); when
-the check fails it calls `Navigator::replace(redirect_to)` so the
-denied page can't be back-buttoned into:
-
-```rust
-#[component]
-fn AdminUsersPage() -> Element {
-    rsx! {
-        RequirePermission {
-            token: "admin:users:read".to_string(),
-            redirect_to: "/".to_string(),
-            AdminUsersBody {}
-        }
-    }
-}
-```
-
-For routes that just need "user must be signed in" (no role / scope
-check), use `RequireAuth`. Two shapes are supported — pick whichever
-matches the surrounding UX.
-
-Redirect on deny (matches `RequirePermission`):
-
-```rust
-#[component]
-fn DashboardPage() -> Element {
-    rsx! {
-        RequireAuth { redirect_to: "/login".to_string(),
-            DashboardBody {}
-        }
-    }
-}
-```
-
-Inline fallback (render a `Login` panel in place of the gated page —
-avoids the redirect flash and is more robust than a `use_effect`-based
-navigation under hydration):
-
-```rust
-#[component]
-fn DashboardPage() -> Element {
-    rsx! {
-        RequireAuth { fallback: rsx! { Login {} },
-            DashboardBody {}
-        }
-    }
-}
-```
-
-`RequirePermission` with no `token`/`any_of`/`all_of` props builds an
-empty policy that fails closed — so it won't admit even authenticated
-users. Reach for `RequireAuth` for the plain login gate;
-`RequirePermission` for role-aware checks.
-
-### Imperative checks via the hook
+### Imperative checks
 
 `use_permissions()` returns a `Copy` handle for event handlers and
 imperative branches:
 
 ```rust
 let perms = use_permissions();
-if perms.has("admin:users:read")        { /* … */ }
-if perms.any_of(["a", "b"])             { /* … */ }
-if perms.all_of(["a", "b"])             { /* … */ }
+if perms.has("admin:users:read") { /* … */ }
+if perms.any_of(["a", "b"])      { /* … */ }
+if perms.all_of(["a", "b"])      { /* … */ }
 perms.is_authenticated();
 perms.is_loading();
-perms.profile();           // Option<UserProfile> — full profile if loaded
-perms.refresh();           // re-fetch after a grant change
+perms.profile();                 // Option<UserProfile>
+perms.refresh();                 // re-fetch after a grant change
 ```
 
 ### Reusable policies
 
-When the same check appears in more than one place — typically the
-navigation entry to a section *and* the section's route guard — define
-it as a `Policy` so the call sites can't drift apart. A `Policy` is a
-small value type: combine tokens with `any_of` / `all_of` / `with`,
-optionally bind a scope, and pass to either gate component:
+When the same check appears in more than one place — typically a nav
+entry *and* a route guard — define it as a `Policy` so the call sites
+can't drift apart:
 
 ```rust
 fn admin_policy() -> Policy {
     Policy::any_of(["admin:users:read", "admin:audit:read"])
 }
 
-// Nav entry — pruned when none of the admin tokens are held.
-PermissionGate { policy: admin_policy(), AdminTabTrigger {} }
-
-// Route guard — same check, redirects on miss.
-RequirePermission { policy: admin_policy(), redirect_to: "/", AdminBody {} }
-
-// Imperative branch.
+PermissionGate     { policy: admin_policy(), AdminTabTrigger {} }
+RequirePermission  { policy: admin_policy(), redirect_to: "/", AdminBody {} }
 if perms.check(&admin_policy()) { /* … */ }
 ```
 
-Adding a new surface to the section is now a one-place edit: append the
-new token to the policy. Both call sites pick it up.
-
-Policies support a small tier-building shape with `.with(...)` and
-`.scoped(...)`:
+Tier-building shape with `.with(...)` and `.scoped(...)`:
 
 ```rust
 fn project_viewer() -> Policy { Policy::token("read") }
@@ -241,19 +371,14 @@ PermissionGate {
 }
 ```
 
-`Policy` is deliberately not a full boolean DSL — there's no
-`or`/`and`/`not` between policies. If your use case needs that today,
-construct the union of tokens by hand and revisit when a third pattern
-emerges.
-
-If `policy` is set on a gate, the inline `token` / `any_of` / `all_of`
-/ `scope` props are ignored.
+`Policy` is deliberately not a full boolean DSL — there's no `or` /
+`and` / `not` between policies. If a `policy` is set on a gate, the
+inline `token` / `any_of` / `all_of` / `scope` props are ignored.
 
 ### Scoped tokens (inline form)
 
-For one-off checks that vary by resource (one record, one tenant, etc.),
-pass `scope` inline; the gate composes the final lookup as
-`"{scope}:{token}"`:
+For one-off checks that vary by resource, pass `scope` inline; the
+gate composes the final lookup as `"{scope}:{token}"`:
 
 ```rust
 PermissionGate {
@@ -268,32 +393,24 @@ The library treats `scope` as an opaque prefix — what it means is up
 to your app. Grant the matching tokens server-side via
 `user_permissions` (or your own scoped-grant table).
 
-### Live invalidation
+## Cargo features
 
-The profile resource is cached for the lifetime of the
-`PermissionsProvider`. After any action that changes the current
-user's grants, call `perms.refresh()` to re-fetch. Cross-tab /
-server-push invalidation is left to the app.
-
-## Features
-
-`dx-auth` exposes the following Cargo features. The defaults give you
-"everything on, SQLite backend, UI components included":
+The defaults give you "everything on, SQLite backend, UI included":
 
 ```toml
 default = ["server", "ui", "sqlite", "oauth-github", "mfa", "mail", "ratelimit"]
 ```
 
-| Feature        | What it gates                                                                 |
-| -------------- | ----------------------------------------------------------------------------- |
-| `server`       | Core server-side runtime (sqlx, axum, axum_session, argon2). Required for all server functionality. |
-| `ui`           | The catalog UI components (`LoginPanel`, `Button`, `Card`, `Input`, etc.).    |
-| `sqlite`       | Use `sqlx::SqlitePool` as the storage backend. **Mutually exclusive with `postgres`.** |
-| `postgres`     | Use `sqlx::PgPool` as the storage backend. **Mutually exclusive with `sqlite`.**       |
-| `oauth-github` | GitHub OAuth provider impl. Implies the internal `_oauth-core` feature, which pulls in the `oauth2` + `reqwest` deps and gates the generic `OAuthProvider` trait, `OAuthRegistry`, and the `/auth/{provider}/login`+`/callback` axum handlers shared by every provider. |
-| `mfa`          | TOTP enrollment + verification, recovery codes, MFA challenge step in sign-in. |
-| `mail`         | The `Mailer` (SMTP + dev `.eml` fallback) and the email-verification / password-reset endpoints. Without `mail`, sign-up auto-marks accounts verified. |
-| `ratelimit`    | Per-IP rate limiter via `tower_governor`.                                     |
+| Feature        | Gates |
+| -------------- | ----- |
+| `server`       | Core server runtime (sqlx, axum, axum_session, argon2). Required for any backend functionality. |
+| `ui`           | Catalog widgets + drop-in screens (`LoginPanel`, `MfaSetup`, etc.). |
+| `sqlite`       | `sqlx::SqlitePool` backend. **Mutually exclusive with `postgres`.** |
+| `postgres`     | `sqlx::PgPool` backend. **Mutually exclusive with `sqlite`.** |
+| `oauth-github` | GitHub provider impl. Implies internal `_oauth-core` (oauth2 + reqwest + the generic provider routes shared by every provider). |
+| `mfa`          | TOTP enrollment + verification, recovery codes, MFA challenge step. Includes `MfaChallenge` / `MfaSetup` UI. |
+| `mail`         | `Mailer` (SMTP + dev `.eml` fallback) and email-verification / password-reset endpoints + UI. Without `mail`, signup auto-marks accounts verified. |
+| `ratelimit`    | Per-IP rate limiter via `tower_governor`. |
 
 Examples:
 
@@ -301,264 +418,142 @@ Examples:
 # Postgres + everything
 dx-auth = { version = "0.1", default-features = false, features = ["server", "ui", "postgres"] }
 
-# OAuth-only (no password / email features), SQLite
+# OAuth-only (no password / email flows), SQLite
 dx-auth = { version = "0.1", default-features = false, features = ["server", "ui", "sqlite", "oauth-github", "ratelimit"] }
 
-# Headless (no UI; you bring your own component library)
+# Headless (bring your own component library)
 dx-auth = { version = "0.1", default-features = false, features = ["server", "sqlite", "oauth-github", "mfa", "mail", "ratelimit"] }
 ```
 
 ## Environment variables
 
-All env vars are optional — features gracefully degrade when their config
-isn't present.
+All env vars are optional — features gracefully degrade when their
+config isn't present.
 
 ### GitHub OAuth (`oauth-github` feature)
 
-| Var                    | Default                                       | Notes |
-| ---------------------- | --------------------------------------------- | --- |
-| `GITHUB_CLIENT_ID`     | _(unset)_                                     | OAuth App Client ID from <https://github.com/settings/developers>. |
-| `GITHUB_CLIENT_SECRET` | _(unset)_                                     | OAuth App Client Secret. |
-| `GITHUB_REDIRECT_URL`  | `http://localhost:8080/auth/github/callback`  | Must exactly match the GitHub OAuth App's "Authorization callback URL". |
-
-`GithubProvider::from_env()` returns `Ok(None)` when either required
-var is missing/empty, in which case the GitHub routes aren't
-registered and `available_providers` returns an empty list.
+| Var | Default | Notes |
+| --- | --- | --- |
+| `GITHUB_CLIENT_ID` | _(unset)_ | OAuth App Client ID from <https://github.com/settings/developers>. |
+| `GITHUB_CLIENT_SECRET` | _(unset)_ | OAuth App Client Secret. |
+| `GITHUB_REDIRECT_URL` | `http://localhost:8080/auth/github/callback` | Must exactly match the GitHub OAuth App's "Authorization callback URL". |
 
 ### Email (`mail` feature)
 
 When `SMTP_HOST` is set, lettre opens a STARTTLS submission connection.
-When it's unset, the dev fallback writes RFC-822 `.eml` files into
-`./emails/<timestamp>.eml` so password-reset and verification flows are
-testable without a provider.
+When unset, the dev fallback writes RFC-822 `.eml` files into
+`./emails/<timestamp>.eml`.
 
-| Var               | Default                  | Notes |
-| ----------------- | ------------------------ | --- |
-| `SMTP_HOST`       | _(unset → file backend)_ | e.g. `smtp.sendgrid.net` or `localhost` against a local [Mailpit](https://mailpit.axllent.org/). |
-| `SMTP_PORT`       | `587`                    |   |
-| `SMTP_USER`       | _(unset → no auth)_      |   |
-| `SMTP_PASSWORD`   | _(unset)_                |   |
-| `FROM_EMAIL`      | `noreply@localhost`      | `From:` header. |
-| `PUBLIC_BASE_URL` | `http://localhost:8080`  | Used to build absolute links inside email bodies. |
+| Var | Default | Notes |
+| --- | --- | --- |
+| `SMTP_HOST` | _(unset → file backend)_ | e.g. `smtp.sendgrid.net`, or `localhost` against [Mailpit](https://mailpit.axllent.org/). |
+| `SMTP_PORT` | `587` | |
+| `SMTP_USER` | _(unset → no auth)_ | |
+| `SMTP_PASSWORD` | _(unset)_ | |
+| `FROM_EMAIL` | `noreply@localhost` | `From:` header. |
+| `PUBLIC_BASE_URL` | `http://localhost:8080` | Used to build absolute links in email bodies. |
+
+### Bootstrap / dev
+
+| Var | Default | Notes |
+| --- | --- | --- |
+| `DX_AUTH_BOOTSTRAP_ADMIN_EMAIL` | _(unset)_ | If set, the matching signup is auto-granted the `admin` role (and re-granted on every startup if the row exists). `BOOTSTRAP_ADMIN_EMAIL` is accepted as an alias. Independently, if no admin exists when a new user signs up, that signup is promoted (Sentry/GitLab convention) so a fresh install always has one admin. |
+| `DX_AUTH_SKIP_EMAIL_VERIFICATION` | _(unset)_ | Accepts `1` / `true` / `yes` / `on`. When truthy, `register_with_password` marks accounts verified immediately and returns `LoginOutcome::LoggedIn`. |
 
 ### Dev server
 
-| Var    | Default     | Notes |
-| ------ | ----------- | --- |
-| `IP`   | `127.0.0.1` | Wired by `dx serve`. |
-| `PORT` | `8080`      | Wired by `dx serve`. |
+| Var | Default | Notes |
+| --- | --- | --- |
+| `IP` | `127.0.0.1` | Wired by `dx serve`. |
+| `PORT` | `8080` | Wired by `dx serve`. |
 
 ## Audit log
 
 Every sign-in, sign-out, admin action, and account self-service write
 goes through the audit emitter and lands in the `audit_events` table.
-The admin UI [`dx_auth::ui::admin::AuditLog`] renders a filterable,
-paginated table on top of it — drop it onto an `/admin/audit` route in
-your app (the example does this).
-
-### Configuration
-
-Capture / retention is set via `AuthConfig::audit(AuditConfig { … })`:
+The `dx_auth::ui::admin::AuditLog` component renders a filterable,
+paginated table — drop it onto an `/admin/audit` route.
 
 ```rust
 use dx_auth::{AuditConfig, AuthConfig};
 
 let cfg = AuthConfig::builder(pool.clone(), mailer)
     .audit(AuditConfig {
-        capture_ip: true,           // store the requester's IP
-        capture_user_agent: true,   // store the requester's UA
+        capture_ip: true,
+        capture_user_agent: true,
         retention_days: 90,         // background task prunes older rows
     })
     .build();
 ```
 
-Defaults: IP + UA both captured, 90-day retention. Set `retention_days
-= 0` to disable pruning entirely (the library writes; you handle
-cleanup).
+Defaults: IP + UA both captured, 90-day retention. Set
+`retention_days = 0` to disable pruning (the library writes; you
+handle cleanup).
 
 ### Emitted events
 
-| Event type                        | When |
-| --------------------------------- | --- |
-| `user.login.success`              | Password (with or without MFA) or OAuth sign-in completes. `details` carries `method` + `remember_me`. |
-| `user.login.failed`               | Bad password, unverified email, or wrong MFA code. `details.reason` is `"invalid"`, `"unverified"`, or `"invalid_code"`. |
-| `user.logout`                     | `/api/user/logout` called. |
-| `user.signup`                     | Password account created. |
-| `user.email_verified`             | Verification token consumed. |
-| `user.password_reset.requested`   | Reset email sent (only fires when the address actually matches a user). |
-| `user.password_reset.consumed`    | Reset link followed and a new password set. |
-| `user.mfa.enabled`                | TOTP enrollment confirmed. |
-| `user.mfa.disabled`               | TOTP turned off. |
-| `account.display_name_changed`    | Self-service display name edit. |
-| `account.password_changed`        | Self-service password rotation. |
-| `account.self_deleted`            | User soft-deletes their own account. |
-| `admin.user.roles_changed`        | Admin replaces a user's role assignments. `details` carries `before` / `after` role-id arrays. |
-| `admin.user.soft_deleted`         | Admin soft-deletes a user. |
+| Event type | When |
+| --- | --- |
+| `user.login.success` | Password (with or without MFA) or OAuth sign-in completes. `details` carries `method` + `remember_me`. |
+| `user.login.failed` | Bad password, unverified email, or wrong MFA code. `details.reason` is `"invalid"`, `"unverified"`, or `"invalid_code"`. |
+| `user.logout` | `/api/user/logout` called. |
+| `user.signup` | Password account created. |
+| `user.email_verified` | Verification token consumed. |
+| `user.password_reset.requested` | Reset email sent (only when the address matches a user). |
+| `user.password_reset.consumed` | Reset link followed and a new password set. |
+| `user.mfa.enabled` | TOTP enrollment confirmed. |
+| `user.mfa.disabled` | TOTP turned off. |
+| `account.display_name_changed` | Self-service display name edit. |
+| `account.password_changed` | Self-service password rotation. |
+| `account.self_deleted` | User soft-deletes their own account. |
+| `admin.user.roles_changed` | Admin replaces a user's role assignments. `details` carries `before` / `after` role-id arrays. |
+| `admin.user.soft_deleted` | Admin soft-deletes a user. |
 
-Apps can emit their own events too — call
-`dx_auth::auth::audit::record(&pool, RecordInput { … }).await` with any
-`event_type` string and an optional JSON `details` blob.
+Apps can emit their own events too:
+
+```rust
+dx_auth::auth::audit::record(&pool, RecordInput { /* event_type, details, … */ }).await?;
+```
 
 ## What the library ships vs what your app owns
 
 **Library owns:**
 
-- `users` table + `user_permissions`, `oauth_accounts`,
+- The schema: `users`, `user_permissions`, `oauth_accounts`,
   `password_reset_tokens`, `email_verification_tokens`,
-  `mfa_recovery_codes`, `mfa_secret` / `mfa_enabled_at` columns.
+  `mfa_recovery_codes`, `audit_events`, `roles`, `user_roles`, `api_keys`.
 - Sign-in / sign-up / OAuth / verification / reset / MFA server fns.
-- `LoginPanel` UI component (drop in; takes a provider list + submit
-  callback).
-- Client-side RBAC primitives — `PermissionsProvider`,
-  `use_permissions`, `PermissionGate`, `RequirePermission`.
+- Drop-in screens: `LoginPanel`, `ForgotPassword`, `ResetPassword`,
+  `VerifyEmail`, `MfaChallenge`, `MfaSetup`, `AccountSettings`,
+  `AdminUserList` / `AdminUserDetail` / `AdminRoleList` /
+  `AdminRoleEditor` / `AuditLog`.
+- Client RBAC primitives: `PermissionsProvider`, `use_permissions`,
+  `PermissionGate`, `RequirePermission`, `RequireAuth`, `Policy`.
 
 **Your app owns:**
 
 - Page layout, theme, copy.
-- Domain extensions to the user record (store side-data in your own
+- Domain extensions to the user record (keep side-data in your own
   table keyed by `users.id`).
-- Permission tokens and what they mean.
-- Profile page / MFA-setup page UI (the example has these — copy them
-  as starting points).
-
-## Repo layout
-
-```
-.
-├── Cargo.toml                       (workspace root)
-├── crates/dx-auth/
-│   ├── Cargo.toml
-│   ├── migrations/
-│   │   ├── sqlite/                  (copy into your app's migrations/)
-│   │   └── postgres/
-│   └── src/
-│       ├── lib.rs                   public surface
-│       ├── auth.rs                  User + password / MFA helpers
-│       ├── oauth.rs                 OAuthProvider trait + registry + generic axum handlers
-│       ├── oauth/github.rs          GitHub provider impl (oauth-github feature)
-│       ├── mail.rs                  Mailer + templates
-│       ├── server.rs                Dioxus server fns
-│       ├── pool.rs                  cfg-gated Pool / SessionPool aliases
-│       ├── config.rs                AuthConfig + builder
-│       ├── install.rs               dx_auth::install(router, cfg)
-│       ├── wire.rs                  LoginOutcome, UserProfile, ProviderInfo, etc.
-│       └── ui/
-│           ├── login_panel/         the reusable login card
-│           ├── permissions.rs       PermissionsProvider / Gate / Require / hook
-│           ├── account/             AccountSettings panel
-│           ├── admin/               AdminUserList / AdminUserDetail / AuditLog
-│           └── components/          catalog widgets (button, card, etc.)
-└── examples/basic/                  end-to-end fullstack consumer
-```
-
-## Dev tips
-
-- `cargo check --workspace` builds both crates.
-- `cargo check -p dx-auth --no-default-features --features server,sqlite`
-  builds the minimal library (no MFA, no OAuth, no mail, no rate limit).
-- Example app: `cd examples/basic && dx serve`. See
-  [examples/basic/README.md](examples/basic/README.md) for the env-var
-  walkthrough specific to running the demo locally.
-- `sqlite3 examples/basic/auth.db '.schema'` to inspect the live schema.
-- Migrations are checksummed by sqlx; if you edit a `.sql` file after
-  it's been applied, sqlx refuses to start until you wipe the DB or add
-  a new migration file with the fix-up.
-
-## OAuth provider list
-
-The `providers` prop on `LoginPanel` takes a `Vec<LoginProvider>` describing
-the third-party sign-in buttons to render. To avoid re-fetching the list
-on every `LoginPanel` mount — and to keep it cached across login/logout
-cycles where the panel comes in and out of the tree — fetch it once at
-the app root with `OAuthProvidersProvider`, then read it anywhere with
-`use_oauth_providers()`:
-
-```rust
-use dx_auth::ui::{
-    use_oauth_providers, LoginPanel, OAuthProvidersProvider, PermissionsProvider,
-};
-
-fn app() -> Element {
-    rsx! {
-        PermissionsProvider {
-            OAuthProvidersProvider {
-                Router::<Route> {}
-            }
-        }
-    }
-}
-
-#[component]
-fn LoginScreen() -> Element {
-    let providers = use_oauth_providers();
-    rsx! {
-        LoginPanel {
-            providers,
-            on_submit: /* … */,
-        }
-    }
-}
-```
-
-`use_oauth_providers()` returns an empty `Vec` if the provider isn't in
-scope or the fetch hasn't resolved yet — `LoginPanel` simply hides the
-provider section in that case, so there's no flicker.
-
-## Drop-in auth routes
-
-`LoginPanel` is one of four ready-made screen components. The other three
-sit at the email-driven side flows linked from the login card. Wire them
-into the consumer's `Route` enum:
-
-```rust
-use dx_auth::ui::{ForgotPassword, ResetPassword, VerifyEmail};
-
-#[derive(Routable, Clone, PartialEq)]
-pub enum Route {
-    #[route("/login")]
-    Login {},
-    #[route("/auth/forgot")]
-    ForgotPassword {},
-    #[route("/auth/reset?:token")]
-    ResetPassword { token: String },
-    #[route("/auth/verify?:token")]
-    VerifyEmail { token: String },
-    // ... your domain routes
-}
-```
-
-Paths above match `LoginPanel`'s default `forgot_href` and the URLs that
-the `mail` backend bakes into outgoing verification / reset emails. If
-you mount them somewhere else, override `LoginPanel { forgot_href: "..." }`
-and configure the mailer's link templates to match.
-
-Each component is anonymous-accessible (no `RequireAuth` wrapping) and
-calls the corresponding server fn under the hood:
-
-- `ForgotPassword` → `dx_auth::server::request_password_reset_email`.
-  Always shows a neutral "if an account exists…" message — the server fn
-  is user-enumeration-safe and returns `Ok(())` regardless.
-- `ResetPassword { token }` → `dx_auth::server::reset_password`.
-  Confirms passwords match client-side; surfaces friendly errors via
-  `friendly_server_error`.
-- `VerifyEmail { token }` → `dx_auth::server::verify_email`. Fires on
-  mount, then renders one of three states (pending / verified /
-  expired-or-used).
-
-Each accepts overridable text props (`title`, `description`, `back_href`)
-if you want to localize the copy.
+- Permission tokens and what they mean (the library evaluates them;
+  your code grants them and writes the policies that use them).
 
 ## Common pitfalls
 
-These came out of an early consumer migration. None are blocking, but
-they're easier to plan around if you know about them.
+### `dx-auth/sqlite` (or `postgres`) belongs behind your `server` feature
+
+`sqlite` / `postgres` pull `axum_session_sqlx` → `aes-gcm` →
+`getrandom 0.2` into the build, and `getrandom 0.2` doesn't compile
+for `wasm32-unknown-unknown` without its `js` feature. Keep
+`dx-auth/sqlite` (or `postgres`) gated behind your own `server`
+feature rather than in the default `dx-auth` feature list. The example
+in `Cargo.toml` above shows this.
 
 ### `user.id` is `i32` but the session is `i64`
 
-`dx_auth::auth::User` declares `pub id: i32`, but the session type is
-`AuthSession<User, i64, _, _>` and the SQLite users table column is
-`INTEGER` (64-bit). Anywhere you read the ID for use with i64 columns or
-domain models, cast at the boundary:
+`dx_auth::auth::User` declares `id: i32`, but the session type is
+`AuthSession<User, i64, _, _>` and the SQLite users column is
+`INTEGER` (64-bit). Cast at the boundary:
 
 ```rust
 let user_id = auth.current_user.as_ref()
@@ -567,40 +562,69 @@ let user_id = auth.current_user.as_ref()
     .id as i64;
 ```
 
-### First signup gets the `admin` role automatically
+### First signup may get the `admin` role automatically
 
-The library's bootstrap path grants the `admin` role to the first user
-that signs up (or to whoever matches `DX_AUTH_BOOTSTRAP_ADMIN_EMAIL` if
-set). Harmless if you don't expose an admin UI, but worth knowing when
-you see `admin:users:read` etc. on a freshly-signed-up account.
+If `DX_AUTH_BOOTSTRAP_ADMIN_EMAIL` is set, the matching signup is
+granted `admin`. Independently, if no admin currently exists when a
+new user signs up, that signup is promoted. Harmless if you don't
+expose an admin UI, but worth knowing when you see `admin:users:read`
+on a freshly-signed-up test account.
 
-### The `mail` feature changes signup-success semantics
+### The `mail` feature changes signup semantics
 
 With `mail` on, `register_with_password` returns
-`LoginOutcome::EmailUnverified` and writes a verification email. Without
-`mail`, it returns `LoginOutcome::LoggedIn` directly. Your login UI's
-`on_submit` should handle both branches so the same code path works
-whichever feature set you ship — `examples/basic`'s `on_login_submit`
-covers all three outcomes (`LoggedIn` / `EmailUnverified` / `MfaRequired`).
+`LoginOutcome::EmailUnverified` and writes a verification email.
+Without `mail`, it returns `LoginOutcome::LoggedIn` directly. A login
+handler should cover all three outcomes (`LoggedIn` /
+`EmailUnverified` / `MfaRequired`) so the same code works whichever
+feature set you ship.
 
 ### `username` is derived from the email prefix and is NOT unique
 
-`auth::ensure_user` fills `users.username` from the email prefix on
-signup (or the OAuth provider's login). Nothing enforces uniqueness on
-that column — two `foo@x.com` / `foo@y.com` accounts both get
-`username = "foo"`. If your domain has a "lookup by username" path
-(e.g. invite-by-username), prefer email-based lookup for any feature
-where selecting the wrong user matters.
+`ensure_user` fills `users.username` from the email prefix on signup
+(or the OAuth provider's login). Nothing enforces uniqueness on that
+column — two `foo@x.com` / `foo@y.com` accounts both get `foo`. If
+your domain has a "lookup by username" path, prefer email-based lookup
+for any feature where selecting the wrong user matters.
 
-### Wrap the router in `PermissionsProvider` even if you don't gate anything
+## Repo layout
 
-The provider does more than supply the `use_permissions()` context — it
-also pins the catalog widget stylesheets used by `LoginPanel`,
-`ForgotPassword`, `ResetPassword`, and `VerifyEmail` to the document
-head via [`dx_auth::ui::AuthStylesheets`]. Without that pin, the link
-tags emitted from inside the widgets disappear from `<head>` when the
-widget unmounts (sign in → navigate away → log out → re-mount the
-login screen), and the post-logout login screen renders unstyled. If
-your app embeds `LoginPanel` without using `PermissionsProvider` (e.g. a
-marketing page), render `dx_auth::ui::AuthStylesheets {}` directly at
-the root instead.
+```
+.
+├── crates/dx-auth/
+│   ├── migrations/{sqlite,postgres}/  (shipped via `dx_auth::migrator()`)
+│   └── src/
+│       ├── lib.rs                     public surface
+│       ├── auth.rs                    User + password / MFA helpers
+│       ├── oauth.rs                   OAuthProvider trait + registry
+│       ├── oauth/github.rs            GitHub provider impl
+│       ├── mail.rs                    Mailer + templates
+│       ├── server.rs                  Dioxus server fns
+│       ├── pool.rs                    cfg-gated Pool aliases
+│       ├── config.rs                  AuthConfig + builder
+│       ├── install.rs                 dx_auth::install(router, cfg)
+│       ├── wire.rs                    LoginOutcome, UserProfile, etc.
+│       └── ui/
+│           ├── login_panel/           LoginPanel
+│           ├── mfa/                   MfaChallenge + MfaSetup
+│           ├── forgot_password/       ForgotPassword
+│           ├── reset_password/        ResetPassword
+│           ├── verify_email/          VerifyEmail
+│           ├── account/               AccountSettings
+│           ├── admin/                 AdminUserList / Detail / Roles / AuditLog
+│           ├── permissions.rs         PermissionsProvider / Gate / Require / hook
+│           ├── require_auth.rs        RequireAuth
+│           └── components/            catalog widgets (button, card, …)
+└── examples/basic/                    end-to-end fullstack consumer
+```
+
+## Dev tips
+
+- `cargo check --workspace` builds the library + example.
+- `cargo check -p dx-auth --no-default-features --features server,sqlite`
+  builds the minimal library (no MFA, no OAuth, no mail, no rate limit).
+- `cd examples/basic && dx serve` runs the demo.
+- `sqlite3 examples/basic/auth.db '.schema'` inspects the live schema.
+- Migrations are checksummed by sqlx; if you edit a `.sql` file after
+  it's been applied, sqlx refuses to start until you wipe the DB or
+  add a new migration file with the fix-up.

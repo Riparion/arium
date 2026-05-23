@@ -1,16 +1,32 @@
 # examples/basic
 
-End-to-end demo of [`dx-auth`](../../). All auth primitives — password,
-GitHub OAuth, email verification, password reset, TOTP MFA, rate
-limiting, sessions — come from the library; this binary owns the
-Home page, ProfileCard, MFA setup UI, and a small `get_permissions`
-server fn that uses an app-specific permission token.
+End-to-end demo of [`dx-auth`](../../). Every auth screen — sign in,
+forgot/reset password, email verification, MFA challenge, MFA setup,
+account settings, admin user list / role editor / audit log — comes
+from the library as a drop-in `dx_auth::ui::*` component. This binary
+only owns app-specific pieces:
+
+- `Home` — the post-login landing page (tabs for Account, Two-factor,
+  and Admin) plus the pre-login `LoginPanel` shell.
+- `ProfileCard` — a small avatar + name + email card rendered above
+  the account settings tab.
+- `VerificationPending` — the "check your inbox" card shown after a
+  signup needs verification.
+- `AccountSettingsPage` — a thin route wrapper around
+  `dx_auth::ui::AccountSettings`.
+- `AdminPage` — a tabset that composes the library's
+  `AdminUserList` / `AdminUserDetail` / `AuditLog` /
+  `AdminRoleList` / `AdminRoleEditor` drop-ins, with per-tab
+  permission gating and master-detail selection state.
+- `get_permissions` server fn — demos the `axum_session_auth` rights
+  check against the library's `User` and an app-specific permission
+  token (`Category::View`).
 
 ## Run
 
 ```bash
 cd examples/basic
-dx serve
+DX_AUTH_SKIP_EMAIL_VERIFICATION=1 dx serve
 ```
 
 Then open `http://localhost:8080`. A `auth.db` SQLite file is created on
@@ -19,8 +35,9 @@ all accounts).
 
 ## Optional env vars
 
-See [the workspace README](../../README.md#environment-variables) for
-the full table. The most useful ones for kicking the tires locally:
+See [USAGE.md](../../USAGE.md#environment-variables) in the workspace
+root for the full table. The most useful ones for kicking the tires
+locally:
 
 ```bash
 # Enable the "Continue with GitHub" button. Without these the panel
@@ -38,14 +55,11 @@ dx serve
 ## What's in the example
 
 - `src/main.rs` — `Home`, `ProfileCard`, `VerificationPending`,
-  `MfaChallengeView`, `MfaSetup`, `MfaSetupArtifacts`, `MfaConfirmForm`,
-  `VerifyEmail`, `ForgotPassword`, `ResetPassword`, plus a
-  `get_permissions` server fn demoing the `axum_session_auth` rights
-  check against the library's `User`.
+  `AccountSettingsPage`, `AdminPage`, plus the `get_permissions`
+  server fn.
 - `assets/dx-components-theme.css` — the catalog's theme (dark
   variables; the example forces dark via `app.css`).
-- `assets/app.css` — page layout + dark-theme override + dx-auth panel
-  visuals.
-- `migrations/0001_init.sql` … `0004_mfa.sql` — copied from
-  `crates/dx-auth/migrations/sqlite/` and applied via `sqlx::migrate!()`
-  at startup.
+- `assets/app.css` — page layout + dark-theme override + a couple of
+  example-only classes (`.app-shell`, `.profile-card`).
+- Schema migrations are applied via `dx_auth::migrator().run(&pool)`
+  at startup — the example owns no `.sql` files of its own.

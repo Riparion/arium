@@ -1,7 +1,5 @@
 # Dioxus Full Stack Authentication
 
-![LoginPanel screenshot](examples/basic/screenshot.png)
-
 Reusable authentication library for [Dioxus 0.7](https://dioxuslabs.com)
 fullstack apps. Provides:
 
@@ -31,6 +29,10 @@ fullstack apps. Provides:
 
 See [USAGE.md](USAGE.md) for getting started, features, environment
 variables, audit log, repo layout, and dev tips.
+
+![LoginPanel screenshot](screenshot.png)
+
+See also: [MFA enrollment screenshot](screenshot_mfa.png).
 
 ## License
 

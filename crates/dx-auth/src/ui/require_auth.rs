@@ -25,7 +25,7 @@ use crate::ui::permissions::use_permissions;
 /// The guard renders `fallback` for every non-authed state — loading and
 /// denied alike — so there's no flash-of-blank and no dependence on a
 /// `use_effect` firing post-hydration (which has been observed to be
-/// flaky on some routes — see INTEGRATION.md gotcha 2.5).
+/// flaky on some routes).
 ///
 /// ```rust,ignore
 /// RequireAuth { fallback: rsx! { Login {} },

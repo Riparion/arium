@@ -82,7 +82,6 @@ pub fn ResetPassword(
                                         id: "dx-reset-password",
                                         r#type: "password",
                                         autocomplete: "new-password",
-                                        placeholder: "••••••••",
                                         value: "{password}",
                                         oninput: move |evt: FormEvent| password.set(evt.value()),
                                     }
@@ -93,7 +92,6 @@ pub fn ResetPassword(
                                         id: "dx-reset-password-confirm",
                                         r#type: "password",
                                         autocomplete: "new-password",
-                                        placeholder: "••••••••",
                                         value: "{confirm}",
                                         oninput: move |evt: FormEvent| confirm.set(evt.value()),
                                     }

@@ -82,7 +82,7 @@ pub fn LoginPanel(
     #[props(default = "Start a new workspace.")] signup_description: &'static str,
     #[props(default = "Create account")] signup_submit_label: &'static str,
     #[props(default = "you@example.com")] email_placeholder: &'static str,
-    #[props(default = "••••••••")] password_placeholder: &'static str,
+    #[props(default = "")] password_placeholder: &'static str,
     #[props(default)] forgot_href: Option<&'static str>,
     #[props(default = true)] show_email_password: bool,
     #[props(default)] error: Option<String>,
@@ -181,21 +181,10 @@ pub fn LoginPanel(
                     }
 
                     div { class: Styles::login_field,
-                        div { class: Styles::login_label_row,
-                            Label {
-                                html_for: "login-password",
-                                class: Styles::login_label,
-                                "Password"
-                            }
-                            if !is_signup {
-                                if let Some(href) = forgot_href {
-                                    a {
-                                        class: Styles::login_forgot,
-                                        href: "{href}",
-                                        "Forgot?"
-                                    }
-                                }
-                            }
+                        Label {
+                            html_for: "login-password",
+                            class: Styles::login_label,
+                            "Password"
                         }
                         Input {
                             id: "login-password",
@@ -205,6 +194,15 @@ pub fn LoginPanel(
                             placeholder: "{password_placeholder}",
                             value: "{password}",
                             oninput: move |evt: FormEvent| password.set(evt.value()),
+                        }
+                        if !is_signup {
+                            if let Some(href) = forgot_href {
+                                a {
+                                    class: Styles::login_forgot,
+                                    href: "{href}",
+                                    "Forgot?"
+                                }
+                            }
                         }
                     }
 

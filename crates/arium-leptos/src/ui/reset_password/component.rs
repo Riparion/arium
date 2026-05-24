@@ -69,7 +69,6 @@ pub fn ResetPassword(
                                                 id="dx-reset-password"
                                                 input_type="password"
                                                 autocomplete="new-password"
-                                                placeholder="••••••••"
                                                 value=password
                                                 on_input=Callback::new(move |v: String| {
                                                     password.set(v)
@@ -84,7 +83,6 @@ pub fn ResetPassword(
                                                 id="dx-reset-password-confirm"
                                                 input_type="password"
                                                 autocomplete="new-password"
-                                                placeholder="••••••••"
                                                 value=confirm
                                                 on_input=Callback::new(move |v: String| {
                                                     confirm.set(v)

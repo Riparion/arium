@@ -64,7 +64,7 @@ pub fn LoginPanel(
     #[prop(default = "Start a new workspace.")] signup_description: &'static str,
     #[prop(default = "Create account")] signup_submit_label: &'static str,
     #[prop(default = "you@example.com")] email_placeholder: &'static str,
-    #[prop(default = "••••••••")] password_placeholder: &'static str,
+    #[prop(default = "")] password_placeholder: &'static str,
     #[prop(optional)] forgot_href: Option<&'static str>,
     #[prop(default = true)] show_email_password: bool,
     #[prop(optional, into)] error: Signal<Option<String>>,
@@ -142,16 +142,9 @@ pub fn LoginPanel(
                     </div>
 
                     <div class="login-field">
-                        <div class="login-label-row">
-                            <Label html_for="login-password" class="login-label">
-                                "Password"
-                            </Label>
-                            <Show when=move || !is_signup() && forgot_href.is_some()>
-                                <a class="login-forgot" href=forgot_href.unwrap_or("#")>
-                                    "Forgot?"
-                                </a>
-                            </Show>
-                        </div>
+                        <Label html_for="login-password" class="login-label">
+                            "Password"
+                        </Label>
                         <Input
                             id="login-password"
                             name="password"
@@ -161,6 +154,11 @@ pub fn LoginPanel(
                             value=password
                             on_input=Callback::new(move |v: String| password.set(v))
                         />
+                        <Show when=move || !is_signup() && forgot_href.is_some()>
+                            <a class="login-forgot" href=forgot_href.unwrap_or("#")>
+                                "Forgot?"
+                            </a>
+                        </Show>
                     </div>
 
                     <Show

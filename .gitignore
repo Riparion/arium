@@ -11,6 +11,11 @@ Cargo.lock
 **/auth.db-shm
 **/emails/
 
+# Docker runtime state from examples/*/docker-compose.yml: the bind-mounted
+# ./data dir holds the SQLite DB (auth.db / auth-leptos.db) and the .eml
+# mailer output. Host-owned and per-environment — never committed.
+examples/*/data/
+
 # Local secrets. SMTP creds, OAuth client secrets, the bootstrap-admin email,
 # anything else that lives in a per-environment dotenv file. `.env.example`
 # is unignored so a tracked template (placeholder values, no secrets) is

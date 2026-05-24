@@ -14,17 +14,20 @@ async fn main() -> anyhow::Result<()> {
     use leptos_fullstack_example::app::App;
     use leptos_fullstack_example::shell;
     use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+    use std::str::FromStr;
 
-    // Keep the dev database out of the source tree: write it under the workspace
-    // `target/` dir (gitignored), not the example's cwd.
-    let db_path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../target/auth-leptos.db");
+    // DB location: `DATABASE_URL` when set (e.g. the Docker image passes
+    // `sqlite:///app/data/auth-leptos.db?mode=rwc`), otherwise a dev default
+    // under the workspace `target/` dir (gitignored), not the example's cwd.
+    let connect_opts = match std::env::var("DATABASE_URL") {
+        Ok(url) if !url.trim().is_empty() => SqliteConnectOptions::from_str(&url)?,
+        _ => SqliteConnectOptions::new()
+            .filename(concat!(env!("CARGO_MANIFEST_DIR"), "/../../target/auth-leptos.db"))
+            .create_if_missing(true),
+    };
     let pool = SqlitePoolOptions::new()
         .max_connections(20)
-        .connect_with(
-            SqliteConnectOptions::new()
-                .filename(db_path)
-                .create_if_missing(true),
-        )
+        .connect_with(connect_opts)
         .await?;
     arium_leptos::migrator().run(&pool).await?;
 

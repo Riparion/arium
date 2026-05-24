@@ -22,3 +22,36 @@ start fresh); run only one instance at a time.
 
 Needs [`cargo-leptos`](https://github.com/leptos-rs/cargo-leptos)
 (`cargo install cargo-leptos`) and the `wasm32-unknown-unknown` target.
+
+## Run with Docker
+
+A **runtime-only** image — no Rust/wasm toolchain inside. You build on the
+host, and a slim Debian image just runs the SSR `server` binary plus the
+client bundle from `target/site/`. SQLite keeps it single-container: no
+database service to manage.
+
+```bash
+cd examples/leptos-fullstack-example
+cp .env.example .env            # optional — edit port / OAuth / SMTP
+mkdir -p data                   # so it's owned by you, not root (see below)
+cargo leptos build --release
+docker compose up -d --build
+```
+
+Open <http://localhost:8080>. The SQLite DB and the `.eml` mailer output land
+in `./data/` (host-owned, gitignored) — `rm -rf data` to start fresh.
+
+- Create `data/` yourself first: the container runs as `user:
+  ${UID:-1000}:${GID:-1000}` so the DB/emails land host-owned, but if Docker
+  has to create the bind-mount dir it makes it `root`-owned and the container
+  can't write. On a default `1000:1000` login, `mkdir -p data` is all you
+  need; on a different uid/gid, set `UID=` / `GID=` in `.env` (bash keeps
+  `UID` readonly, so `export UID` won't work — `.env` is the clean path).
+- Build context is the workspace root (the binary + bundle live in the shared
+  `target/`); compose sets `context: ../..` for you. Runtime config comes from
+  `LEPTOS_*` env in the Dockerfile (there's no `Cargo.toml` in the image).
+- Override the published port, `PUBLIC_BASE_URL`, SMTP creds, GitHub OAuth,
+  etc. via `.env` (see `.env.example`; the repo-root `.env.example` lists every
+  arium var, including Google / Microsoft / generic OIDC).
+- After a code change, rebuild:
+  `cargo leptos build --release && docker compose up -d --build`.

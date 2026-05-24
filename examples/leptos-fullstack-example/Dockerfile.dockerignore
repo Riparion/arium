@@ -1,0 +1,12 @@
+# Build context is the workspace root (see docker-compose.yml `context: ../..`),
+# so without this the multi-GB `target/` tree would stream into the build.
+# Whitelist only the server binary + client bundle the Dockerfile copies.
+# Paths are relative to the context root. BuildKit prefers this
+# `<Dockerfile>.dockerignore` over any context-root `.dockerignore`.
+*
+!target
+target/*
+!target/release
+target/release/*
+!target/release/leptos-fullstack-example
+!target/site

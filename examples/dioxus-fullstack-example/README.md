@@ -23,3 +23,34 @@ fresh).
 
 Needs the [Dioxus CLI](https://dioxuslabs.com/learn/0.7/getting_started/)
 (`dx`).
+
+## Run with Docker
+
+A **runtime-only** image — no Rust/wasm toolchain inside. You build the bundle
+on the host, and a slim Debian image just runs the resulting `server` +
+`public/`. SQLite keeps it single-container: no database service to manage.
+
+```bash
+cd examples/dioxus-fullstack-example
+cp .env.example .env            # optional — edit port / OAuth / SMTP
+mkdir -p data                   # so it's owned by you, not root (see below)
+dx bundle --release --platform web --package dioxus-fullstack-example
+docker compose up -d --build
+```
+
+Open <http://localhost:8080>. The SQLite DB and the `.eml` mailer output land
+in `./data/` (host-owned, gitignored) — `rm -rf data` to start fresh.
+
+- Create `data/` yourself first: the container runs as `user:
+  ${UID:-1000}:${GID:-1000}` so the DB/emails land host-owned, but if Docker
+  has to create the bind-mount dir it makes it `root`-owned and the container
+  can't write. On a default `1000:1000` login, `mkdir -p data` is all you
+  need; on a different uid/gid, set `UID=` / `GID=` in `.env` (bash keeps
+  `UID` readonly, so `export UID` won't work — `.env` is the clean path).
+- Build context is the workspace root (the bundle lives in the shared
+  `target/`); compose sets `context: ../..` for you.
+- Override the published port, `PUBLIC_BASE_URL`, SMTP creds, GitHub OAuth,
+  etc. via `.env` (see `.env.example`; the repo-root `.env.example` lists every
+  arium var, including Google / Microsoft / generic OIDC).
+- After a code change, re-bundle and rebuild:
+  `dx bundle --release --platform web --package dioxus-fullstack-example && docker compose up -d --build`.

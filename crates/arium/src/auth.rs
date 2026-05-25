@@ -862,6 +862,37 @@ pub enum VerifyOutcome {
     Invalid,
 }
 
+/// A throwaway Argon2 hash that no real password produces, used to equalize
+/// the cost of the "no such account" and "corrupt stored hash" paths in
+/// [`verify_password_user`]. Without it, those paths skip the (deliberately
+/// expensive) Argon2 verify and return ~25x faster than a wrong-password
+/// attempt against a real account — a timing side-channel that lets an
+/// attacker enumerate which emails have accounts, defeating the
+/// indistinguishability that [`VerifyOutcome::Invalid`] promises. Built once
+/// with the default Argon2 params (the same `hash_password` uses) so the
+/// dummy verify costs the same as a genuine one.
+static DUMMY_PASSWORD_HASH: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+    use argon2::Argon2;
+    use argon2::password_hash::{PasswordHasher, SaltString, rand_core::OsRng};
+    let salt = SaltString::generate(&mut OsRng);
+    Argon2::default()
+        .hash_password(b"timing-equalization-dummy", &salt)
+        .expect("hashing a fixed dummy password with default params never fails")
+        .to_string()
+});
+
+/// Run an Argon2 verify against [`DUMMY_PASSWORD_HASH`] and discard the
+/// result. Called on the early-return branches of [`verify_password_user`]
+/// purely to burn the same CPU a real verify would, so response time doesn't
+/// leak whether the account exists.
+fn burn_password_verify(password: &str) {
+    use argon2::Argon2;
+    use argon2::password_hash::{PasswordHash, PasswordVerifier};
+    if let Ok(parsed) = PasswordHash::new(DUMMY_PASSWORD_HASH.as_str()) {
+        let _ = Argon2::default().verify_password(password.as_bytes(), &parsed);
+    }
+}
+
 /// Verify an email/password pair and the account's email-verified status.
 pub async fn verify_password_user(
     db: &Pool,
@@ -881,10 +912,15 @@ pub async fn verify_password_user(
     .await?;
 
     let Some((user_id, stored_hash, verified_at)) = row else {
+        // No matching account: do a dummy verify so this costs the same as a
+        // wrong-password attempt against a real account (see DUMMY_PASSWORD_HASH).
+        burn_password_verify(password);
         return Ok(VerifyOutcome::Invalid);
     };
 
     let Ok(parsed) = PasswordHash::new(&stored_hash) else {
+        // Stored hash is unparseable — same timing treatment as above.
+        burn_password_verify(password);
         return Ok(VerifyOutcome::Invalid);
     };
 

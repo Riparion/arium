@@ -107,4 +107,7 @@ pub use mail::Mailer;
 // Wire-types re-exported at the crate root for ergonomics.
 #[cfg(feature = "tokens")]
 pub use wire::{ApiTokenView, CreateApiTokenResponse};
-pub use wire::{LoginOutcome, MfaSetupView, MfaStatusView, ProviderInfo, UserProfile};
+pub use wire::{
+    LoginOutcome, MfaSetupView, MfaStatusView, PasskeyChallenge, PasskeyCredentialResponse,
+    PasskeyInfo, ProviderInfo, UserProfile,
+};

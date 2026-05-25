@@ -18,6 +18,7 @@
 //! the signature counter, and transports.
 
 use crate::pool::Pool;
+use crate::wire::PasskeyInfo;
 use webauthn_rs::prelude::*;
 
 // Re-export the ceremony types that framework adapters must name when they
@@ -25,26 +26,18 @@ use webauthn_rs::prelude::*;
 // to them as `arium::webauthn::*` without depending on `webauthn-rs` directly.
 pub use webauthn_rs::prelude::{
     CreationChallengeResponse, DiscoverableAuthentication, PasskeyAuthentication,
-    PasskeyRegistration, PublicKeyCredential, RegisterPublicKeyCredential, RequestChallengeResponse,
-    Webauthn,
+    PasskeyRegistration, PublicKeyCredential, RegisterPublicKeyCredential,
+    RequestChallengeResponse, Webauthn,
 };
-
-/// One enrolled passkey, as surfaced to the account-settings UI.
-pub struct PasskeyRecord {
-    /// base64url of the credential id — the handle used to revoke it.
-    pub credential_id: String,
-    /// User-supplied label, if any.
-    pub nickname: Option<String>,
-    /// Unix seconds the credential was registered.
-    pub created_at: i64,
-    /// Unix seconds it was last used to authenticate, if ever.
-    pub last_used_at: Option<i64>,
-}
 
 /// Build the shared [`Webauthn`] instance from the relying-party config.
 /// Called once from [`crate::install`]; the result is wrapped in an `Arc`
 /// extension that server fns extract.
-pub fn build_webauthn(rp_id: &str, rp_origin: &url::Url, rp_name: &str) -> anyhow::Result<Webauthn> {
+pub fn build_webauthn(
+    rp_id: &str,
+    rp_origin: &url::Url,
+    rp_name: &str,
+) -> anyhow::Result<Webauthn> {
     let builder = WebauthnBuilder::new(rp_id, rp_origin)
         .map_err(|e| anyhow::anyhow!("webauthn builder init failed: {e}"))?
         .rp_name(rp_name);
@@ -195,8 +188,10 @@ pub async fn finish_discoverable(
     Ok(user_id)
 }
 
-/// List a user's enrolled passkeys for the account-settings UI.
-pub async fn list_credentials(db: &Pool, user_id: i64) -> anyhow::Result<Vec<PasskeyRecord>> {
+/// List a user's enrolled passkeys for the account-settings UI. Timestamps are
+/// formatted server-side (like [`crate::wire::ApiTokenView`]) so the wasm
+/// client needs no date library.
+pub async fn list_credentials(db: &Pool, user_id: i64) -> anyhow::Result<Vec<PasskeyInfo>> {
     let rows: Vec<(String, Option<String>, i64, Option<i64>)> = sqlx::query_as(
         "SELECT credential_id, nickname, created_at, last_used_at \
          FROM webauthn_credentials WHERE user_id = $1 ORDER BY created_at",
@@ -207,11 +202,11 @@ pub async fn list_credentials(db: &Pool, user_id: i64) -> anyhow::Result<Vec<Pas
     Ok(rows
         .into_iter()
         .map(
-            |(credential_id, nickname, created_at, last_used_at)| PasskeyRecord {
+            |(credential_id, nickname, created_at, last_used_at)| PasskeyInfo {
                 credential_id,
                 nickname,
-                created_at,
-                last_used_at,
+                created_at_iso: format_unix_date(created_at),
+                last_used_at_iso: last_used_at.map(format_unix_date),
             },
         )
         .collect())
@@ -224,11 +219,12 @@ pub async fn revoke_credential(
     user_id: i64,
     credential_id: &str,
 ) -> anyhow::Result<bool> {
-    let res = sqlx::query("DELETE FROM webauthn_credentials WHERE user_id = $1 AND credential_id = $2")
-        .bind(user_id)
-        .bind(credential_id)
-        .execute(db)
-        .await?;
+    let res =
+        sqlx::query("DELETE FROM webauthn_credentials WHERE user_id = $1 AND credential_id = $2")
+            .bind(user_id)
+            .bind(credential_id)
+            .execute(db)
+            .await?;
     Ok(res.rows_affected() > 0)
 }
 
@@ -327,4 +323,14 @@ fn unix_now() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0)
+}
+
+/// Format unix seconds as a `YYYY-MM-DD` date, matching the API-token views.
+fn format_unix_date(secs: i64) -> String {
+    use chrono::TimeZone;
+    chrono::Utc
+        .timestamp_opt(secs, 0)
+        .single()
+        .map(|dt| dt.format("%Y-%m-%d").to_string())
+        .unwrap_or_else(|| secs.to_string())
 }

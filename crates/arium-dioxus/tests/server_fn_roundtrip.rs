@@ -79,3 +79,35 @@ async fn register_login_profile_logout_round_trip() {
         "must be anonymous again after logout, got {profile:?}"
     );
 }
+
+/// The passkey machinery is mounted by `install` and the discoverable
+/// (passwordless) challenge endpoint returns well-formed WebAuthn options. We
+/// can't complete a ceremony without a browser/authenticator, but this proves
+/// the `Arc<Webauthn>` extension is wired and the server fn round-trips.
+#[cfg(feature = "webauthn")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn passkey_discoverable_challenge_is_well_formed() {
+    let base = common::spawn_app().await;
+    let client = common::client();
+
+    let (challenge, _): (arium_dioxus::wire::PasskeyChallenge, bool) = common::post_json(
+        &client,
+        &base,
+        "/api/user/passkeys/discoverable/begin",
+        serde_json::json!({}),
+    )
+    .await;
+
+    let parsed: serde_json::Value =
+        serde_json::from_str(&challenge.options_json).expect("options_json must be valid JSON");
+    assert!(
+        parsed.get("publicKey").is_some(),
+        "discoverable options should carry a publicKey block: {}",
+        challenge.options_json
+    );
+    assert!(
+        challenge.options_json.contains("challenge"),
+        "options must carry a challenge: {}",
+        challenge.options_json
+    );
+}

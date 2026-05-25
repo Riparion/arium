@@ -18,7 +18,7 @@ readme = "README.md"
 path = "src/lib.rs"
 
 [features]
-default = ["server", "ui", "sqlite", "oauth-github", "mfa", "mail", "ratelimit", "tokens"]
+default = ["server", "ui", "sqlite", "oauth-github", "mfa", "webauthn", "mail", "ratelimit", "tokens"]
 
 # Pulls the server engine in and turns on Dioxus's server runtime. The
 # `arium` dep is target-gated to non-wasm below, so enabling `server` on a
@@ -40,6 +40,10 @@ oauth-oidc = ["arium?/oauth-oidc"]
 oauth-google = ["arium?/oauth-google"]
 oauth-microsoft = ["arium?/oauth-microsoft"]
 mfa = ["arium?/mfa"]
+# Passkeys / WebAuthn. `dep:serde_json` is used server-side to (de)serialize the
+# ceremony JSON; the wasm-only browser bridge deps (web-sys, wasm-bindgen, …)
+# are added to this feature alongside the bridge module.
+webauthn = ["arium?/webauthn", "dep:serde_json"]
 mail = ["arium?/mail"]
 ratelimit = ["arium?/ratelimit"]
 tokens = ["arium?/tokens"]
@@ -54,6 +58,10 @@ dioxus-icons = { version = "0.1.0", default-features = false }
 # HEAD happens to be — including a breaking change — into the lockfile. Bump
 # this rev deliberately (and re-run the UI build) rather than letting it drift.
 dioxus-primitives = { git = "https://github.com/DioxusLabs/components", rev = "837c9d4c1c9f99b19de7a3f087d8af1b0538dcae", version = "0.0.1", default-features = false, optional = true }
+
+# Used server-side to (de)serialize WebAuthn ceremony JSON. Compiles on every
+# target; only pulled in under the `webauthn` feature.
+serde_json = { version = "1", optional = true }
 
 # The server engine is needed only off-wasm and only under `server`; keeping
 # it target-gated keeps sqlx/argon2/axum out of the browser bundle. The server

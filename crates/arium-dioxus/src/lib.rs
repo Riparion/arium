@@ -52,6 +52,8 @@ pub use arium_wire as wire;
 #[cfg(feature = "tokens")]
 pub use arium_wire::{ApiTokenView, CreateApiTokenResponse};
 pub use arium_wire::{LoginOutcome, MfaSetupView, MfaStatusView, ProviderInfo, UserProfile};
+#[cfg(feature = "webauthn")]
+pub use arium_wire::{PasskeyChallenge, PasskeyCredentialResponse, PasskeyInfo};
 
 // Server-side engine API, re-exported for fullstack consumers. Present only on
 // the native/server build (the `arium` dep is target-gated off wasm).

@@ -20,6 +20,7 @@
 //!     LoginOutcome::LoggedIn => "dashboard",
 //!     LoginOutcome::EmailUnverified => "verify email",
 //!     LoginOutcome::MfaRequired => "enter a TOTP code",
+//!     LoginOutcome::PasskeyRequired => "use a passkey",
 //! };
 //! assert_eq!(next, "enter a TOTP code");
 //! ```
@@ -39,6 +40,9 @@ pub enum LoginOutcome {
     EmailUnverified,
     /// Credentials accepted; the user must submit a TOTP code to finish.
     MfaRequired,
+    /// Credentials accepted; the user must complete a passkey (WebAuthn)
+    /// assertion to finish — the account has a passkey enrolled as a factor.
+    PasskeyRequired,
 }
 
 /// One third-party identity provider the server has credentials for and is
@@ -127,6 +131,48 @@ pub enum MfaStatusView {
     Pending,
     /// MFA is required at every sign-in.
     Enabled,
+}
+
+// ---- WebAuthn / passkey wire types ----
+//
+// WebAuthn ceremonies traffic in JSON blobs (the creation/request options the
+// browser consumes, and the attestation/assertion it produces). Rather than
+// model the full WebAuthn schema here, these carry the JSON as opaque strings:
+// the engine (via `webauthn-rs`) produces and validates them, and only the
+// framework adapter — which is target- and feature-gated — parses them to drive
+// `navigator.credentials`. That keeps this shared crate dependency-light.
+
+/// A passkey ceremony challenge handed to the client. `options_json` is the
+/// serialized `PublicKeyCredential{Creation,Request}Options` the browser feeds
+/// to `navigator.credentials.create()` / `.get()`.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct PasskeyChallenge {
+    /// Serialized WebAuthn options JSON, passed straight to the browser API.
+    pub options_json: String,
+}
+
+/// The browser's ceremony result, posted back for the server to verify.
+/// `credential_json` is the serialized attestation (registration) or assertion
+/// (authentication) `PublicKeyCredential`.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct PasskeyCredentialResponse {
+    /// Serialized credential JSON produced by `navigator.credentials`.
+    pub credential_json: String,
+}
+
+/// One enrolled passkey, for the account-settings list. Date fields are
+/// pre-formatted server-side (like [`ApiTokenView`]) so the wasm client needs
+/// no date library.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PasskeyInfo {
+    /// base64url credential id — the handle passed back to revoke this passkey.
+    pub credential_id: String,
+    /// User-supplied label, if any.
+    pub nickname: Option<String>,
+    /// ISO 8601 timestamp the passkey was registered.
+    pub created_at_iso: String,
+    /// ISO 8601 timestamp it was last used to authenticate, or `None`.
+    pub last_used_at_iso: Option<String>,
 }
 
 // ---- API token wire types ----
@@ -288,6 +334,10 @@ pub struct AccountView {
     pub mfa_enabled: bool,
     /// `true` if a password is set (OAuth-only accounts may have no password).
     pub has_password: bool,
+    /// `true` if the user has at least one passkey (WebAuthn credential).
+    pub has_passkey: bool,
+    /// Number of passkeys enrolled on the account.
+    pub passkey_count: usize,
     /// Provider names (`"github"`, ...) currently linked to this account.
     pub linked_oauth_providers: Vec<String>,
 }

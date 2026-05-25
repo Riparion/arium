@@ -57,6 +57,15 @@ pub async fn spawn_app() -> String {
     // `ratelimit` feature is on by default, so this is gated to match.
     #[cfg(feature = "ratelimit")]
     let builder = builder.rate_limit(None);
+    // Configure a WebAuthn relying party so `install` mounts the passkey
+    // extension. `reqwest::Url` re-exports the `url` crate's `Url`, so no extra
+    // dev-dep is needed to build the origin.
+    #[cfg(feature = "webauthn")]
+    let builder = builder.webauthn(
+        "localhost",
+        reqwest::Url::parse("http://localhost:8080").expect("rp origin"),
+        "arium test",
+    );
     let cfg = builder.build().expect("build config");
 
     // Register every collected server fn onto a headless state (no asset dir /

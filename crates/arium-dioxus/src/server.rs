@@ -16,6 +16,8 @@ use arium_wire::{ApiTokenView, CreateApiTokenResponse};
 use arium_wire::{LoginOutcome, ProviderInfo, UserProfile};
 #[cfg(feature = "mfa")]
 use arium_wire::{MfaSetupView, MfaStatusView};
+#[cfg(feature = "webauthn")]
+use arium_wire::{PasskeyChallenge, PasskeyCredentialResponse, PasskeyInfo};
 
 #[cfg(feature = "server")]
 use arium::auth;
@@ -36,6 +38,26 @@ pub(crate) type ProvidersExtension = axum::Extension<std::sync::Arc<Vec<arium_wi
 #[cfg(feature = "server")]
 use arium::extract::{AuditCtx, SessionStore};
 
+/// Shared WebAuthn relying party, attached by `arium::install` when passkeys
+/// are configured. Server fns extract it to run ceremonies.
+#[cfg(all(feature = "server", feature = "webauthn"))]
+pub(crate) type WebauthnExtension = axum::Extension<std::sync::Arc<arium::webauthn::Webauthn>>;
+
+/// Session keys for the passkey flows. Like `MFA_PENDING_KEY`, the pending key
+/// holds `(user_id, expires_at_unix, remember_me)` between password
+/// verification and the assertion; the `*_STATE_KEY`s hold the in-progress
+/// webauthn-rs ceremony state between the begin/finish round-trips.
+#[cfg(all(feature = "server", feature = "webauthn"))]
+const PASSKEY_PENDING_KEY: &str = "passkey_pending";
+#[cfg(all(feature = "server", feature = "webauthn"))]
+const PASSKEY_REG_STATE_KEY: &str = "webauthn_reg";
+#[cfg(all(feature = "server", feature = "webauthn"))]
+const PASSKEY_2FA_STATE_KEY: &str = "webauthn_2fa";
+#[cfg(all(feature = "server", feature = "webauthn"))]
+const PASSKEY_DISCO_STATE_KEY: &str = "webauthn_disco";
+#[cfg(all(feature = "server", feature = "webauthn"))]
+const PASSKEY_PENDING_TTL_SECS: i64 = 5 * 60;
+
 /// Session key under which we stash `(user_id, expires_at_unix, remember_me)`
 /// between a successful password verification and the user submitting their
 /// TOTP code.
@@ -46,7 +68,7 @@ const MFA_PENDING_KEY: &str = "mfa_pending";
 #[cfg(all(feature = "server", feature = "mfa"))]
 const MFA_PENDING_TTL_SECS: i64 = 5 * 60;
 
-#[cfg(all(feature = "server", feature = "mfa"))]
+#[cfg(all(feature = "server", any(feature = "mfa", feature = "webauthn")))]
 fn unix_now_seconds() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -230,6 +252,16 @@ pub async fn login_with_password(
                     let expires_at = unix_now_seconds().saturating_add(MFA_PENDING_TTL_SECS);
                     session.set(MFA_PENDING_KEY, (user_id, expires_at, remember_me));
                     return Ok(LoginOutcome::MfaRequired);
+                }
+            }
+            // No TOTP, but if the account has a passkey enrolled, require it as
+            // a second factor before completing the login.
+            #[cfg(feature = "webauthn")]
+            {
+                if arium::webauthn::user_has_passkey(&db.0, user_id).await? {
+                    let expires_at = unix_now_seconds().saturating_add(PASSKEY_PENDING_TTL_SECS);
+                    session.set(PASSKEY_PENDING_KEY, (user_id, expires_at, remember_me));
+                    return Ok(LoginOutcome::PasskeyRequired);
                 }
             }
             complete_login(&auth, &session, user_id, remember_me);
@@ -554,6 +586,306 @@ pub async fn get_mfa_status() -> Result<MfaStatusView> {
         auth::MfaStatus::Pending => MfaStatusView::Pending,
         auth::MfaStatus::Enabled => MfaStatusView::Enabled,
     })
+}
+
+// ============================================================
+// Passkeys / WebAuthn
+// ============================================================
+
+/// Begin registering a new passkey for the signed-in user. Returns the creation
+/// options JSON the browser feeds to `navigator.credentials.create()`; the
+/// in-progress ceremony state is stashed in the session for the finish step.
+#[cfg(feature = "webauthn")]
+#[post(
+    "/api/user/passkeys/register/begin",
+    auth: auth::Session,
+    db: DbExtension,
+    session: SessionStore,
+    wa: WebauthnExtension,
+)]
+pub async fn begin_passkey_registration() -> Result<PasskeyChallenge> {
+    let user = auth
+        .current_user
+        .as_ref()
+        .ok_or_else(|| ServerFnError::new("Not signed in."))?;
+    if user.anonymous {
+        return Err(ServerFnError::new("Not signed in.").into());
+    }
+    let user_id = user.id as i64;
+    let label = user.email.clone().unwrap_or_else(|| user.username.clone());
+    let display = user
+        .display_name
+        .clone()
+        .unwrap_or_else(|| user.username.clone());
+
+    let (challenge, state) =
+        arium::webauthn::start_registration(&db.0, &wa.0, user_id, &label, &display).await?;
+    session.set(PASSKEY_REG_STATE_KEY, state);
+    let options_json =
+        serde_json::to_string(&challenge).map_err(|e| ServerFnError::new(e.to_string()))?;
+    Ok(PasskeyChallenge { options_json })
+}
+
+/// Finish passkey registration: verify the browser's attestation against the
+/// stashed state and store the credential.
+#[cfg(feature = "webauthn")]
+#[post(
+    "/api/user/passkeys/register/finish",
+    auth: auth::Session,
+    db: DbExtension,
+    session: SessionStore,
+    wa: WebauthnExtension,
+    audit: AuditCtx,
+)]
+pub async fn finish_passkey_registration(
+    response: PasskeyCredentialResponse,
+    nickname: String,
+) -> Result<()> {
+    let user = auth
+        .current_user
+        .as_ref()
+        .ok_or_else(|| ServerFnError::new("Not signed in."))?;
+    if user.anonymous {
+        return Err(ServerFnError::new("Not signed in.").into());
+    }
+    let user_id = user.id as i64;
+
+    let state: arium::webauthn::PasskeyRegistration =
+        session.get(PASSKEY_REG_STATE_KEY).ok_or_else(|| {
+            ServerFnError::new("Your passkey registration expired. Please try again.")
+        })?;
+    let cred: arium::webauthn::RegisterPublicKeyCredential =
+        serde_json::from_str(&response.credential_json)
+            .map_err(|e| ServerFnError::new(format!("invalid credential: {e}")))?;
+
+    let nickname = nickname.trim();
+    let nickname = if nickname.is_empty() {
+        None
+    } else {
+        Some(nickname)
+    };
+    arium::webauthn::finish_registration(&db.0, &wa.0, user_id, &cred, &state, nickname).await?;
+    session.remove(PASSKEY_REG_STATE_KEY);
+    audit
+        .record(
+            &db.0,
+            auth::audit::USER_PASSKEY_REGISTERED,
+            Some(user_id),
+            Some(user_id),
+            None,
+        )
+        .await;
+    Ok(())
+}
+
+/// List the signed-in user's enrolled passkeys.
+#[cfg(feature = "webauthn")]
+#[get("/api/user/passkeys", auth: auth::Session, db: DbExtension)]
+pub async fn list_passkeys() -> Result<Vec<PasskeyInfo>> {
+    let user = auth
+        .current_user
+        .as_ref()
+        .ok_or_else(|| ServerFnError::new("Not signed in."))?;
+    if user.anonymous {
+        return Err(ServerFnError::new("Not signed in.").into());
+    }
+    Ok(arium::webauthn::list_credentials(&db.0, user.id as i64).await?)
+}
+
+/// Remove one of the signed-in user's passkeys by its base64url credential id.
+#[cfg(feature = "webauthn")]
+#[post("/api/user/passkeys/revoke", auth: auth::Session, db: DbExtension, audit: AuditCtx)]
+pub async fn revoke_passkey(credential_id: String) -> Result<()> {
+    let user = auth
+        .current_user
+        .as_ref()
+        .ok_or_else(|| ServerFnError::new("Not signed in."))?;
+    if user.anonymous {
+        return Err(ServerFnError::new("Not signed in.").into());
+    }
+    let user_id = user.id as i64;
+    if !arium::webauthn::revoke_credential(&db.0, user_id, &credential_id).await? {
+        return Err(ServerFnError::new("Passkey not found.").into());
+    }
+    audit
+        .record(
+            &db.0,
+            auth::audit::USER_PASSKEY_REVOKED,
+            Some(user_id),
+            Some(user_id),
+            None,
+        )
+        .await;
+    Ok(())
+}
+
+/// Begin the passkey second-factor challenge for the pending password login.
+#[cfg(feature = "webauthn")]
+#[post(
+    "/api/user/passkeys/login/begin",
+    db: DbExtension,
+    session: SessionStore,
+    wa: WebauthnExtension,
+)]
+pub async fn begin_passkey_login() -> Result<PasskeyChallenge> {
+    let pending: Option<(i64, i64, bool)> = session.get(PASSKEY_PENDING_KEY);
+    let Some((user_id, expires_at, _remember_me)) = pending else {
+        return Err(
+            ServerFnError::new("Your sign-in challenge expired. Please sign in again.").into(),
+        );
+    };
+    if unix_now_seconds() > expires_at {
+        session.remove(PASSKEY_PENDING_KEY);
+        return Err(
+            ServerFnError::new("Your sign-in challenge expired. Please sign in again.").into(),
+        );
+    }
+    let (challenge, state) = arium::webauthn::start_authentication(&db.0, &wa.0, user_id).await?;
+    session.set(PASSKEY_2FA_STATE_KEY, state);
+    let options_json =
+        serde_json::to_string(&challenge).map_err(|e| ServerFnError::new(e.to_string()))?;
+    Ok(PasskeyChallenge { options_json })
+}
+
+/// Finish the passkey second-factor challenge and complete the login.
+#[cfg(feature = "webauthn")]
+#[post(
+    "/api/user/passkeys/login/finish",
+    auth: auth::Session,
+    db: DbExtension,
+    session: SessionStore,
+    wa: WebauthnExtension,
+    audit: AuditCtx,
+)]
+pub async fn finish_passkey_login(response: PasskeyCredentialResponse) -> Result<LoginOutcome> {
+    let pending: Option<(i64, i64, bool)> = session.get(PASSKEY_PENDING_KEY);
+    let Some((user_id, expires_at, remember_me)) = pending else {
+        return Err(
+            ServerFnError::new("Your sign-in challenge expired. Please sign in again.").into(),
+        );
+    };
+    if unix_now_seconds() > expires_at {
+        session.remove(PASSKEY_PENDING_KEY);
+        session.remove(PASSKEY_2FA_STATE_KEY);
+        return Err(
+            ServerFnError::new("Your sign-in challenge expired. Please sign in again.").into(),
+        );
+    }
+    let state: arium::webauthn::PasskeyAuthentication =
+        session.get(PASSKEY_2FA_STATE_KEY).ok_or_else(|| {
+            ServerFnError::new("Your sign-in challenge expired. Please sign in again.")
+        })?;
+    let cred: arium::webauthn::PublicKeyCredential =
+        serde_json::from_str(&response.credential_json)
+            .map_err(|e| ServerFnError::new(format!("invalid credential: {e}")))?;
+
+    if let Err(e) =
+        arium::webauthn::finish_authentication(&db.0, &wa.0, user_id, &cred, &state).await
+    {
+        audit
+            .record(
+                &db.0,
+                auth::audit::USER_LOGIN_FAILED,
+                Some(user_id),
+                Some(user_id),
+                Some("{\"method\":\"passkey\",\"reason\":\"assertion_failed\"}"),
+            )
+            .await;
+        return Err(ServerFnError::new(format!("Passkey sign-in failed: {e}")).into());
+    }
+
+    session.remove(PASSKEY_PENDING_KEY);
+    session.remove(PASSKEY_2FA_STATE_KEY);
+    complete_login(&auth, &session, user_id, remember_me);
+    audit
+        .record(
+            &db.0,
+            auth::audit::USER_PASSKEY_LOGIN,
+            Some(user_id),
+            Some(user_id),
+            Some(&format!(
+                "{{\"method\":\"password+passkey\",\"remember_me\":{remember_me}}}"
+            )),
+        )
+        .await;
+    Ok(LoginOutcome::LoggedIn)
+}
+
+/// Cancel an in-flight passkey second-factor challenge.
+#[cfg(feature = "webauthn")]
+#[post("/api/user/passkeys/login/cancel", session: SessionStore)]
+pub async fn cancel_passkey_login() -> Result<()> {
+    session.remove(PASSKEY_PENDING_KEY);
+    session.remove(PASSKEY_2FA_STATE_KEY);
+    Ok(())
+}
+
+/// Begin a passwordless (discoverable) passkey sign-in. No user is known yet —
+/// the authenticator selects the credential and the assertion carries the
+/// user handle.
+#[cfg(feature = "webauthn")]
+#[post("/api/user/passkeys/discoverable/begin", session: SessionStore, wa: WebauthnExtension)]
+pub async fn begin_passkey_discoverable() -> Result<PasskeyChallenge> {
+    let (challenge, state) = arium::webauthn::start_discoverable(&wa.0)?;
+    session.set(PASSKEY_DISCO_STATE_KEY, state);
+    let options_json =
+        serde_json::to_string(&challenge).map_err(|e| ServerFnError::new(e.to_string()))?;
+    Ok(PasskeyChallenge { options_json })
+}
+
+/// Finish a passwordless sign-in: identify the user from the assertion, verify
+/// it, and complete the login.
+#[cfg(feature = "webauthn")]
+#[post(
+    "/api/user/passkeys/discoverable/finish",
+    auth: auth::Session,
+    db: DbExtension,
+    session: SessionStore,
+    wa: WebauthnExtension,
+    audit: AuditCtx,
+)]
+pub async fn finish_passkey_discoverable(
+    response: PasskeyCredentialResponse,
+    remember_me: bool,
+) -> Result<LoginOutcome> {
+    let state: arium::webauthn::DiscoverableAuthentication =
+        session.get(PASSKEY_DISCO_STATE_KEY).ok_or_else(|| {
+            ServerFnError::new("Your sign-in challenge expired. Please try again.")
+        })?;
+    let cred: arium::webauthn::PublicKeyCredential =
+        serde_json::from_str(&response.credential_json)
+            .map_err(|e| ServerFnError::new(format!("invalid credential: {e}")))?;
+
+    let user_id = match arium::webauthn::finish_discoverable(&db.0, &wa.0, &cred, state).await {
+        Ok(id) => id,
+        Err(e) => {
+            audit
+                .record(
+                    &db.0,
+                    auth::audit::USER_LOGIN_FAILED,
+                    None,
+                    None,
+                    Some("{\"method\":\"passkey_passwordless\",\"reason\":\"assertion_failed\"}"),
+                )
+                .await;
+            return Err(ServerFnError::new(format!("Passkey sign-in failed: {e}")).into());
+        }
+    };
+
+    session.remove(PASSKEY_DISCO_STATE_KEY);
+    complete_login(&auth, &session, user_id, remember_me);
+    audit
+        .record(
+            &db.0,
+            auth::audit::USER_PASSKEY_LOGIN,
+            Some(user_id),
+            Some(user_id),
+            Some(&format!(
+                "{{\"method\":\"passkey_passwordless\",\"remember_me\":{remember_me}}}"
+            )),
+        )
+        .await;
+    Ok(LoginOutcome::LoggedIn)
 }
 
 // ============================================================
@@ -945,6 +1277,11 @@ pub async fn get_account_view() -> Result<AccountView> {
     #[cfg(not(feature = "mfa"))]
     let mfa_enabled = false;
 
+    #[cfg(feature = "webauthn")]
+    let passkey_count = arium::webauthn::list_credentials(&db.0, id).await?.len();
+    #[cfg(not(feature = "webauthn"))]
+    let passkey_count = 0usize;
+
     Ok(AccountView {
         username: user.username.clone(),
         display_name: user.display_name.clone(),
@@ -952,6 +1289,8 @@ pub async fn get_account_view() -> Result<AccountView> {
         email_verified: true, // user is currently signed in, so they verified at some point
         mfa_enabled,
         has_password,
+        has_passkey: passkey_count > 0,
+        passkey_count,
         linked_oauth_providers: providers,
     })
 }

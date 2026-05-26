@@ -178,6 +178,127 @@ async fn grant_respects_actor_authority() {
     assert!(matches!(res, Err(MembershipError::Forbidden)));
 }
 
+/// A grant that would demote the sole `Owner` is refused with `LastOwner` —
+/// the orphan guard mirrored onto the grant path. Covers an owner trying to
+/// lower their own role (no escape hatch except transfer).
+#[tokio::test]
+async fn grant_cannot_demote_the_sole_owner() {
+    let pool = common::pool().await;
+    TableAuthority::create_table(&pool).await;
+    let owner = common::make_user(&pool, "owner@example.invalid", "password123").await;
+    TableAuthority::grant(&pool, owner, BOARD, 1, "owner").await;
+
+    let res = grant_membership(
+        &TableAuthority,
+        &pool,
+        owner,
+        ResourceRef::new(BOARD, 1),
+        owner,
+        ResourceRole::Admin,
+    )
+    .await;
+    assert!(
+        matches!(res, Err(MembershipError::LastOwner)),
+        "the sole owner can't self-demote into an ownerless resource",
+    );
+
+    // Role unchanged — the transaction rolled back.
+    assert_eq!(
+        TableAuthority
+            .role_on(&pool, owner, ResourceRef::new(BOARD, 1))
+            .await
+            .unwrap(),
+        Some(ResourceRole::Owner),
+    );
+}
+
+/// With a co-owner present, demoting one owner via a grant is allowed (it isn't
+/// the *last* owner) — the guard is about the count, not the role name.
+#[tokio::test]
+async fn grant_can_demote_a_non_last_owner() {
+    let pool = common::pool().await;
+    TableAuthority::create_table(&pool).await;
+    let a = common::make_user(&pool, "a@example.invalid", "password123").await;
+    let b = common::make_user(&pool, "b@example.invalid", "password123").await;
+    TableAuthority::grant(&pool, a, BOARD, 1, "owner").await;
+    TableAuthority::grant(&pool, b, BOARD, 1, "owner").await;
+
+    grant_membership(
+        &TableAuthority,
+        &pool,
+        a,
+        ResourceRef::new(BOARD, 1),
+        b,
+        ResourceRole::Admin,
+    )
+    .await
+    .expect("an owner can demote a co-owner while one owner remains");
+    assert_eq!(
+        TableAuthority
+            .role_on(&pool, b, ResourceRef::new(BOARD, 1))
+            .await
+            .unwrap(),
+        Some(ResourceRole::Admin),
+    );
+}
+
+/// An `Admin` may not modify a member who outranks them — no demoting the
+/// `Owner` down to `Admin` (which the actor-tier check alone would permit,
+/// since the *granted* role equals the actor's).
+#[tokio::test]
+async fn admin_cannot_modify_an_owner() {
+    let pool = common::pool().await;
+    TableAuthority::create_table(&pool).await;
+    let owner = common::make_user(&pool, "owner@example.invalid", "password123").await;
+    let admin = common::make_user(&pool, "admin@example.invalid", "password123").await;
+    TableAuthority::grant(&pool, owner, BOARD, 1, "owner").await;
+    TableAuthority::grant(&pool, admin, BOARD, 1, "admin").await;
+
+    let res = grant_membership(
+        &TableAuthority,
+        &pool,
+        admin,
+        ResourceRef::new(BOARD, 1),
+        owner,
+        ResourceRole::Admin,
+    )
+    .await;
+    assert!(
+        matches!(res, Err(MembershipError::Forbidden)),
+        "an admin must not be able to demote the owner",
+    );
+    assert_eq!(
+        TableAuthority
+            .role_on(&pool, owner, ResourceRef::new(BOARD, 1))
+            .await
+            .unwrap(),
+        Some(ResourceRole::Owner),
+        "the owner's role is untouched",
+    );
+}
+
+/// Transferring ownership to oneself is a no-op, not a self-demotion: the sole
+/// owner stays the owner rather than collapsing to `Admin` (0 owners).
+#[tokio::test]
+async fn transfer_to_self_is_a_noop() {
+    let pool = common::pool().await;
+    TableAuthority::create_table(&pool).await;
+    let owner = common::make_user(&pool, "owner@example.invalid", "password123").await;
+    TableAuthority::grant(&pool, owner, BOARD, 1, "owner").await;
+
+    transfer_ownership(&TableAuthority, &pool, ResourceRef::new(BOARD, 1), owner, owner)
+        .await
+        .expect("transfer to self succeeds as a no-op");
+    assert_eq!(
+        TableAuthority
+            .role_on(&pool, owner, ResourceRef::new(BOARD, 1))
+            .await
+            .unwrap(),
+        Some(ResourceRole::Owner),
+        "the sole owner remains the owner",
+    );
+}
+
 /// `list_resources_for_user` returns only resources where the user meets the
 /// minimum role — the reverse query a list view needs.
 #[tokio::test]

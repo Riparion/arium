@@ -190,6 +190,19 @@ fn lookup(e: impl Into<anyhow::Error>) -> MembershipError {
 /// The actor must hold at least [`ResourceRole::Admin`] on the resource and may
 /// not grant a role above their own (an `Admin` can't mint an `Owner`).
 /// Idempotent: re-granting updates the existing role.
+///
+/// Because a grant is also how a role is *lowered*, two further invariants
+/// guard the existing target:
+///
+/// - The actor may not modify a member who outranks them — an `Admin` cannot
+///   demote an `Owner` ([`MembershipError::Forbidden`]). Only the granted role
+///   is bounded by the actor's tier; the target's *current* role is checked
+///   here so the management ladder can't be climbed sideways.
+/// - Demoting the **sole `Owner`** to a lesser role is refused
+///   ([`MembershipError::LastOwner`]), mirroring [`revoke_membership`]'s
+///   orphan-resource guard. Without this, an owner could self-demote (or two
+///   owners could be reduced to none across calls) and strand the resource —
+///   the same dangling state the transfer/leave paths already prevent.
 pub async fn grant_membership(
     store: &dyn MembershipStore,
     db: &Pool,
@@ -205,9 +218,33 @@ pub async fn grant_membership(
         .role_on_tx(&mut tx, resource, actor_id)
         .await
         .map_err(MembershipError::Lookup)?;
-    match actor {
-        Some(a) if a.at_least(ResourceRole::Admin) && a >= role => {}
+    let actor = match actor {
+        Some(a) if a.at_least(ResourceRole::Admin) && a >= role => a,
         _ => return Err(MembershipError::Forbidden),
+    };
+
+    // Read the target's current role in the same transaction so the guards
+    // below see a consistent picture (the owner count can't be raced between
+    // this read and the upsert).
+    if let Some(current) = store
+        .role_on_tx(&mut tx, resource, target_id)
+        .await
+        .map_err(MembershipError::Lookup)?
+    {
+        // Can't act on someone who outranks you.
+        if current > actor {
+            return Err(MembershipError::Forbidden);
+        }
+        // Can't demote away the last owner.
+        if current == ResourceRole::Owner && role < ResourceRole::Owner {
+            let owners = store
+                .count_holders_of_role(&mut tx, resource, ResourceRole::Owner)
+                .await
+                .map_err(MembershipError::Lookup)?;
+            if owners <= 1 {
+                return Err(MembershipError::LastOwner); // raw rolls back on drop
+            }
+        }
     }
 
     store
@@ -263,6 +300,11 @@ pub async fn revoke_membership(
 /// promoted to [`ResourceRole::Owner`] and the previous owner demoted to
 /// [`ResourceRole::Admin`], atomically. `from_id` must currently be an `Owner`
 /// ([`MembershipError::NotOwner`] otherwise).
+///
+/// Transferring to oneself (`from_id == to_id`) is a no-op: the caller already
+/// holds `Owner`, and running the promote/demote pair against a single row
+/// would collapse to a net demotion (upsert `to` → `Owner`, then `from` →
+/// `Admin` on the *same* row) — orphaning the resource. Guarded explicitly.
 pub async fn transfer_ownership(
     store: &dyn MembershipStore,
     db: &Pool,
@@ -279,6 +321,11 @@ pub async fn transfer_ownership(
         .map_err(MembershipError::Lookup)?;
     if from_role != Some(ResourceRole::Owner) {
         return Err(MembershipError::NotOwner);
+    }
+
+    // Already the owner — nothing to move, and proceeding would self-demote.
+    if from_id == to_id {
+        return Ok(());
     }
 
     store

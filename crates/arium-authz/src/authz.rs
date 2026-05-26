@@ -25,7 +25,7 @@
 //! |------------------------------------------------------|-------------------------------------------|------------------------------|
 //! | An app-wide capability ("reach the admin console")   | global RBAC — `Rights::permission(tok)`   | session token snapshot       |
 //! | A resource-scoped action ("edit *this* board")       | [`require_resource`]                      | fresh per-request DB lookup  |
-//! | Either may authorize (global escape hatch over a resource) | [`require_resource_or_permission`]  | resource lookup, then tokens |
+//! | Either may authorize (global escape hatch over a resource) | `arium::require_resource_or_permission` | resource lookup, then tokens |
 //! | Showing/hiding UI (never a security boundary)        | a UI gate (`ResourceGate`/`PermissionGate`) | cosmetic                   |
 //!
 //! The two axes are deliberately blind to each other: [`require_resource`]
@@ -33,8 +33,8 @@
 //! state. That keeps each boundary simple, but it means *neither answers "can
 //! this user act?" alone* once an app wants a global escape hatch over resource
 //! scope — so that composition lives in exactly one place,
-//! [`require_resource_or_permission`], rather than being re-derived (and left to
-//! drift) at each call site.
+//! `arium::require_resource_or_permission`, rather than being re-derived (and
+//! left to drift) at each call site.
 //!
 //! ## The split: arium owns the boundary, the app owns the storage
 //!
@@ -72,9 +72,9 @@
 //! }
 //! ```
 //!
-//! Register the impl so server fns can reach it — either via the builder
-//! ([`AuthConfigBuilder::resource_authority`](crate::AuthConfigBuilder::resource_authority))
-//! or by layering it onto the router yourself:
+//! Register the impl so server fns can reach it — either via the arium
+//! builder (`AuthConfigBuilder::resource_authority`) or by layering it onto
+//! the router yourself:
 //!
 //! ```rust,ignore
 //! let authority: arium::authz::SharedResourceAuthority = std::sync::Arc::new(BoardAuthority);
@@ -88,8 +88,8 @@
 //! for the reverse "which resources can this user see?" query, implement the
 //! richer [`MembershipStore`](crate::membership::MembershipStore) (a supertrait
 //! of [`ResourceAuthority`]) and call the composites in [`crate::membership`].
-//! [`SqlMembershipStore`](crate::SqlMembershipStore) is a ready-made backing
-//! store for apps that don't already own a memberships table.
+//! `arium::SqlMembershipStore` is a ready-made backing store for apps that
+//! don't already own a memberships table.
 //!
 //! ## Resource hierarchy (a recipe, not a primitive)
 //!
@@ -156,10 +156,9 @@ pub trait ResourceAuthority: Send + Sync {
 }
 
 /// Cheaply-cloneable shared handle to the app's [`ResourceAuthority`]. Apps
-/// register this as an `axum::Extension` (directly, or via
-/// [`AuthConfigBuilder::resource_authority`](crate::AuthConfigBuilder::resource_authority));
-/// server fns reach it through the
-/// [`ResourceAuthorityExt`](crate::extract::ResourceAuthorityExt) extractor.
+/// register this as an `axum::Extension` (directly, or via arium's
+/// `AuthConfigBuilder::resource_authority`); server fns reach it through the
+/// `arium::extract::ResourceAuthorityExt` extractor.
 pub type SharedResourceAuthority = Arc<dyn ResourceAuthority>;
 
 /// Why a [`require_resource`] check did not pass.
@@ -200,8 +199,9 @@ impl std::error::Error for ResourceAuthzError {}
 ///
 /// It intentionally does **not** route through `axum_session_auth`'s
 /// `Auth::build().requires(Rights::permission()).validate()` path: that
-/// resolves [`HasPermission::has`](crate::auth) on the in-memory
-/// `User.permissions` set and never reads per-resource state.
+/// resolves the global RBAC permission set on the in-memory `User.permissions`
+/// and never reads per-resource state. Composing the two axes (resource role
+/// OR global permission) is `arium::require_resource_or_permission`.
 pub async fn require_resource(
     authority: &dyn ResourceAuthority,
     db: &Pool,
@@ -216,61 +216,7 @@ pub async fn require_resource(
     }
 }
 
-/// Which axis authorized a [`require_resource_or_permission`] call.
-///
-/// Worth surfacing (e.g. in an audit row): a grant via [`Self::GlobalPermission`]
-/// is an app-wide capability reaching *into* resource scope — a support agent
-/// editing a board they don't belong to — and usually deserves louder logging
-/// than the ordinary [`Self::Resource`] path.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ResourceGrant {
-    /// The user met the per-resource bar (holds a role `>= min_role`).
-    Resource,
-    /// Their resource role was absent or insufficient, but they hold the global
-    /// permission token — the app-wide escape hatch over resource scope.
-    GlobalPermission,
-}
-
-/// Authorize on **either** axis: a sufficient per-resource role, **or** a global
-/// permission token. The one place the two authorization stories compose.
-///
-/// arium's two axes are deliberately blind to each other ([`require_resource`]
-/// never reads `User.permissions`; the global RBAC path never reads resource
-/// state), which keeps each boundary simple but means *neither alone* answers
-/// "can this user act?" when an app wants a global escape hatch — a super-admin
-/// or support role that can touch resources they don't belong to. Rather than
-/// have every call site re-derive "owner OR super-admin" (where the two drift),
-/// express it once here.
-///
-/// Order and semantics: the resource check runs first; only on
-/// [`ResourceAuthzError::Forbidden`] does it fall back to the global token set
-/// ([`crate::auth::list_permissions_for_user`], which unions direct and
-/// role-derived tokens). Default-deny is preserved — an absent role *and* a
-/// missing token is [`ResourceAuthzError::Forbidden`] — and a storage failure on
-/// **either** lookup surfaces as [`ResourceAuthzError::Lookup`], never a silent
-/// deny. The return value names which axis let the caller through.
-pub async fn require_resource_or_permission(
-    authority: &dyn ResourceAuthority,
-    db: &Pool,
-    user_id: i64,
-    resource: ResourceRef<'_>,
-    min_role: ResourceRole,
-    permission: &str,
-) -> Result<ResourceGrant, ResourceAuthzError> {
-    match require_resource(authority, db, user_id, resource, min_role).await {
-        Ok(_) => Ok(ResourceGrant::Resource),
-        Err(ResourceAuthzError::Forbidden) => {
-            // Resource axis said no — consult the global axis. A failure reading
-            // tokens is still a Lookup error, not a silent deny.
-            let perms = crate::auth::list_permissions_for_user(db, user_id)
-                .await
-                .map_err(ResourceAuthzError::Lookup)?;
-            if perms.iter().any(|p| p == permission) {
-                Ok(ResourceGrant::GlobalPermission)
-            } else {
-                Err(ResourceAuthzError::Forbidden)
-            }
-        }
-        Err(e @ ResourceAuthzError::Lookup(_)) => Err(e),
-    }
-}
+// The global↔resource composition bridge (`require_resource_or_permission` +
+// `ResourceGrant`) lives in the `arium` engine crate, not here: it reads the
+// global RBAC permission set (`arium::auth::list_permissions_for_user`), which
+// is the auth engine's concern. This crate stays free of any authn dependency.

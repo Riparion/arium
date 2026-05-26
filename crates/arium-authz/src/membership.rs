@@ -35,10 +35,10 @@
 //!
 //! ## Bundled vs. app-owned storage
 //!
-//! [`SqlMembershipStore`](crate::SqlMembershipStore) is a ready-made
-//! implementation over an arium-owned table for greenfield apps. An app with
-//! its own table (e.g. dx_standup's `board_members`) implements
-//! [`MembershipStore`] directly — same trait, no schema dictated.
+//! `arium::SqlMembershipStore` is a ready-made implementation over an
+//! arium-owned table for greenfield apps. An app with its own table (e.g.
+//! dx_standup's `board_members`) implements [`MembershipStore`] directly —
+//! same trait, no schema dictated.
 
 use crate::authz::{ResourceAuthority, ResourceRef};
 use crate::pool::{DbBackend, DbConnection, Pool};

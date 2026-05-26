@@ -4,10 +4,10 @@
 
 mod common;
 
-use arium::ResourceRole;
-use arium::authz::{
-    require_resource, require_resource_or_permission, ResourceAuthzError, ResourceGrant, ResourceRef,
-};
+use arium::authz::{require_resource, ResourceAuthzError, ResourceRef};
+// The global↔resource bridge lives at the arium crate root (it reads the auth
+// engine's permission set), not under `arium::authz`.
+use arium::{require_resource_or_permission, ResourceGrant, ResourceRole};
 use common::test_authority::{FailingAuthority, TableAuthority};
 
 const BOARD: &str = "board";

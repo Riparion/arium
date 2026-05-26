@@ -17,9 +17,12 @@ path = "src/lib.rs"
 [features]
 default = ["sqlite", "oauth-github", "mfa", "mail", "ratelimit", "tokens"]
 
-# Backend selection — pick exactly one.
-sqlite = ["sqlx/sqlite", "axum_session_sqlx/sqlite"]
-postgres = ["sqlx/postgres", "axum_session_sqlx/postgres"]
+# Backend selection — pick exactly one. Forwarded to arium-pool (the shared
+# source of truth for the Pool type + backend guard) and arium-authz; the
+# latter's `lifecycle` feature is added here since the workspace dep pulls it
+# with default-features off.
+sqlite = ["sqlx/sqlite", "axum_session_sqlx/sqlite", "arium-pool/sqlite", "arium-authz/sqlite", "arium-authz/lifecycle"]
+postgres = ["sqlx/postgres", "axum_session_sqlx/postgres", "arium-pool/postgres", "arium-authz/postgres", "arium-authz/lifecycle"]
 
 # Optional per-capability features. All on by default; turn individual
 # ones off to slim the build down (e.g. an OAuth-only app can drop
@@ -45,6 +48,8 @@ tokens = ["dep:sha2"]
 
 [dependencies]
 arium-wire = { workspace = true }
+arium-pool = { workspace = true }
+arium-authz = { workspace = true }
 serde = { version = "1.0.225", features = ["derive"] }
 anyhow = "1.0.98"
 

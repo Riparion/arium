@@ -56,14 +56,20 @@
 pub use arium_wire as wire;
 
 pub mod auth;
-pub mod authz;
 pub mod config;
 pub mod extract;
-pub mod membership;
 pub mod pool;
+mod authz_bridge;
 mod sql_membership;
 
 mod install;
+
+/// Per-resource authorization, re-exported from the standalone [`arium_authz`]
+/// crate so `arium::authz::*` and `arium::membership::*` keep resolving for
+/// existing code (and the framework adapters). The global↔resource bridge
+/// ([`require_resource_or_permission`]) and the bundled [`SqlMembershipStore`]
+/// stay in this crate — they touch the auth engine and its schema.
+pub use arium_authz::{authz, membership};
 
 #[cfg(feature = "_oauth-core")]
 pub mod oauth;
@@ -76,14 +82,16 @@ pub use config::{AuditConfig, AuthConfig, AuthConfigBuilder, RECOMMENDED_HSTS};
 #[cfg(feature = "ratelimit")]
 pub use config::RateLimitConfig;
 
-pub use authz::{
-    require_resource, require_resource_or_permission, ResourceAuthority, ResourceAuthzError,
-    ResourceGrant, ResourceRef, SharedResourceAuthority,
+// Per-resource authz primitives + lifecycle composites — flattened to the
+// crate root, sourced from arium-authz.
+pub use arium_authz::{
+    grant_membership, require_resource, revoke_membership, transfer_ownership, Membership,
+    MembershipError, MembershipStore, ResourceAuthority, ResourceAuthzError, ResourceRef,
+    SharedResourceAuthority, TxExec,
 };
-pub use membership::{
-    grant_membership, revoke_membership, transfer_ownership, Membership, MembershipError,
-    MembershipStore, TxExec,
-};
+// The global↔resource composition bridge lives here (it reads the auth
+// engine's permission set).
+pub use authz_bridge::{require_resource_or_permission, ResourceGrant};
 pub use sql_membership::SqlMembershipStore;
 pub use extract::{AuditCtx, AuthzCtx, ResourceAuthorityExt, SessionStore};
 pub use install::install;

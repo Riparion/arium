@@ -4,13 +4,13 @@
 
 mod common;
 
-use arium::membership::{
-    grant_membership, revoke_membership, transfer_ownership, MembershipError, MembershipStore,
-};
-use arium::authz::{ResourceAuthority, ResourceRef};
 use arium::ResourceRole;
 #[cfg(feature = "sql-membership")]
 use arium::SqlMembershipStore;
+use arium::authz::{ResourceAuthority, ResourceRef};
+use arium::membership::{
+    MembershipError, MembershipStore, grant_membership, revoke_membership, transfer_ownership,
+};
 use common::test_authority::TableAuthority;
 
 const BOARD: &str = "board";
@@ -34,7 +34,11 @@ async fn revoking_the_last_owner_is_refused() {
         .list_members(&pool, ResourceRef::new(BOARD, 1))
         .await
         .unwrap();
-    assert_eq!(members.len(), 1, "the owner must remain after a refused revoke");
+    assert_eq!(
+        members.len(),
+        1,
+        "the owner must remain after a refused revoke"
+    );
 }
 
 /// With two owners, revoking one is allowed (it isn't the *last* owner).
@@ -116,8 +120,14 @@ async fn only_an_owner_can_transfer() {
     TableAuthority::grant(&pool, admin, BOARD, 1, "manager").await;
     TableAuthority::grant(&pool, other, BOARD, 1, "editor").await;
 
-    let res =
-        transfer_ownership(&TableAuthority, &pool, ResourceRef::new(BOARD, 1), admin, other).await;
+    let res = transfer_ownership(
+        &TableAuthority,
+        &pool,
+        ResourceRef::new(BOARD, 1),
+        admin,
+        other,
+    )
+    .await;
     assert!(matches!(res, Err(MembershipError::NotOwner)));
 }
 
@@ -288,9 +298,15 @@ async fn transfer_to_self_is_a_noop() {
     let owner = common::make_user(&pool, "owner@example.invalid", "password123").await;
     TableAuthority::grant(&pool, owner, BOARD, 1, "owner").await;
 
-    transfer_ownership(&TableAuthority, &pool, ResourceRef::new(BOARD, 1), owner, owner)
-        .await
-        .expect("transfer to self succeeds as a no-op");
+    transfer_ownership(
+        &TableAuthority,
+        &pool,
+        ResourceRef::new(BOARD, 1),
+        owner,
+        owner,
+    )
+    .await
+    .expect("transfer to self succeeds as a no-op");
     assert_eq!(
         TableAuthority
             .role_on(&pool, owner, ResourceRef::new(BOARD, 1))
@@ -322,7 +338,11 @@ async fn list_resources_for_user_filters_by_min_role() {
         .list_resources_for_user(&pool, u, BOARD, ResourceRole::Editor)
         .await
         .unwrap();
-    assert_eq!(editable, vec![1, 3], "only Owner(1) and Editor(3) meet Editor");
+    assert_eq!(
+        editable,
+        vec![1, 3],
+        "only Owner(1) and Editor(3) meet Editor"
+    );
 }
 
 /// The bundled `SqlMembershipStore` over `arium_resource_members` exercises the

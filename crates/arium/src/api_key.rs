@@ -21,7 +21,7 @@
 use crate::auth::tokens::hash_api_token;
 use crate::pool::Pool;
 use axum::body::Body;
-use axum::http::{header::AUTHORIZATION, Request};
+use axum::http::{Request, header::AUTHORIZATION};
 use axum::middleware::Next;
 use axum::response::Response;
 

@@ -56,10 +56,10 @@
 pub use arium_wire as wire;
 
 pub mod auth;
+mod authz_bridge;
 pub mod config;
 pub mod extract;
 pub mod pool;
-mod authz_bridge;
 #[cfg(feature = "sql-membership")]
 mod sql_membership;
 
@@ -93,19 +93,19 @@ pub use config::RateLimitConfig;
 // Per-resource authz primitives + lifecycle composites — flattened to the
 // crate root, sourced from arium-authz.
 pub use arium_authz::{
-    grant_membership, require_resource, revoke_membership, transfer_ownership, Membership,
-    MembershipError, MembershipStore, ResourceAuthority, ResourceAuthzError, ResourceRef,
-    SharedResourceAuthority, TxExec,
+    Membership, MembershipError, MembershipStore, ResourceAuthority, ResourceAuthzError,
+    ResourceRef, SharedResourceAuthority, TxExec, grant_membership, require_resource,
+    revoke_membership, transfer_ownership,
 };
 // The global↔resource composition bridge lives here (it reads the auth
 // engine's permission set).
-pub use authz_bridge::{require_resource_audited, require_resource_or_permission, ResourceGrant};
-#[cfg(feature = "sql-membership")]
-pub use sql_membership::SqlMembershipStore;
-pub use extract::{AuditCtx, AuthUser, AuthzCtx, ResourceAuthorityExt, SessionStore};
 #[cfg(feature = "tokens")]
 pub use api_key::ApiKeyUser;
+pub use authz_bridge::{ResourceGrant, require_resource_audited, require_resource_or_permission};
+pub use extract::{AuditCtx, AuthUser, AuthzCtx, ResourceAuthorityExt, SessionStore};
 pub use install::install;
+#[cfg(feature = "sql-membership")]
+pub use sql_membership::SqlMembershipStore;
 
 /// Returns the embedded migrator that creates the `users`, `oauth_accounts`,
 /// `roles`, `audit_events`, `api_keys`, and related tables arium owns.

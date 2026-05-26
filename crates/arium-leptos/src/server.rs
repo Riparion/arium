@@ -854,11 +854,13 @@ pub async fn require_resource_leptos(
                     Some(&details),
                 )
                 .await;
-            Err(ServerFnError::new("You don't have access to this resource."))
+            Err(ServerFnError::new(
+                "You don't have access to this resource.",
+            ))
         }
-        Err(arium::authz::ResourceAuthzError::Lookup(e)) => {
-            Err(ServerFnError::new(format!("authorization check failed: {e}")))
-        }
+        Err(arium::authz::ResourceAuthzError::Lookup(e)) => Err(ServerFnError::new(format!(
+            "authorization check failed: {e}"
+        ))),
     }
 }
 

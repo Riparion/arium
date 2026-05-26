@@ -28,12 +28,12 @@ pub mod authz;
 pub mod membership;
 
 pub use authz::{
-    require_resource, ResourceAuthority, ResourceAuthzError, ResourceRef, SharedResourceAuthority,
+    ResourceAuthority, ResourceAuthzError, ResourceRef, SharedResourceAuthority, require_resource,
 };
 #[cfg(feature = "lifecycle")]
 pub use membership::{
-    grant_membership, revoke_membership, transfer_ownership, Membership, MembershipError,
-    MembershipStore, TxExec,
+    Membership, MembershipError, MembershipStore, TxExec, grant_membership, revoke_membership,
+    transfer_ownership,
 };
 
 /// The role lattice (`Viewer < Editor < Manager < Owner`), re-exported from

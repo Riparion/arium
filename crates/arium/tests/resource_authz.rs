@@ -4,11 +4,11 @@
 
 mod common;
 
-use arium::authz::{require_resource, ResourceAuthzError, ResourceRef};
+use arium::authz::{ResourceAuthzError, ResourceRef, require_resource};
 // The global↔resource bridge lives at the arium crate root (it reads the auth
 // engine's permission set), not under `arium::authz`.
 use arium::{
-    require_resource_audited, require_resource_or_permission, AuditCtx, ResourceGrant, ResourceRole,
+    AuditCtx, ResourceGrant, ResourceRole, require_resource_audited, require_resource_or_permission,
 };
 use common::test_authority::{FailingAuthority, TableAuthority};
 
@@ -143,9 +143,15 @@ async fn role_meets_or_exceeds_minimum_is_allowed() {
     // Viewer satisfies a Viewer requirement (equality).
     TableAuthority::grant(&pool, uid, BOARD, 1, "viewer").await;
     assert_eq!(
-        require_resource(&TableAuthority, &pool, uid, ResourceRef::new(BOARD, 1), ResourceRole::Viewer)
-            .await
-            .ok(),
+        require_resource(
+            &TableAuthority,
+            &pool,
+            uid,
+            ResourceRef::new(BOARD, 1),
+            ResourceRole::Viewer
+        )
+        .await
+        .ok(),
         Some(uid),
         "require_resource returns the user id on success",
     );
@@ -153,17 +159,29 @@ async fn role_meets_or_exceeds_minimum_is_allowed() {
     // Owner satisfies an Editor requirement (lattice above).
     TableAuthority::grant(&pool, uid, BOARD, 2, "owner").await;
     assert!(
-        require_resource(&TableAuthority, &pool, uid, ResourceRef::new(BOARD, 2), ResourceRole::Editor)
-            .await
-            .is_ok(),
+        require_resource(
+            &TableAuthority,
+            &pool,
+            uid,
+            ResourceRef::new(BOARD, 2),
+            ResourceRole::Editor
+        )
+        .await
+        .is_ok(),
     );
 
     // Editor satisfies an Editor requirement (equality).
     TableAuthority::grant(&pool, uid, BOARD, 3, "editor").await;
     assert!(
-        require_resource(&TableAuthority, &pool, uid, ResourceRef::new(BOARD, 3), ResourceRole::Editor)
-            .await
-            .is_ok(),
+        require_resource(
+            &TableAuthority,
+            &pool,
+            uid,
+            ResourceRef::new(BOARD, 3),
+            ResourceRole::Editor
+        )
+        .await
+        .is_ok(),
     );
 }
 

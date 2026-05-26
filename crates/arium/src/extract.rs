@@ -12,7 +12,7 @@ pub type SessionStore = axum_session::Session<crate::pool::SessionPool>;
 /// Minimal JSON string escaping for audit `details` built in core (which has no
 /// runtime `serde_json` dependency — that's dev-only here).
 fn json_escape(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() + 2);
+    let mut out = String::with_capacity(s.len().saturating_add(2));
     for c in s.chars() {
         match c {
             '"' => out.push_str("\\\""),

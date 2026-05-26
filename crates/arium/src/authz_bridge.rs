@@ -7,7 +7,7 @@
 //! [`crate::auth::list_permissions_for_user`]. `arium-authz` itself stays free
 //! of any authn dependency.
 
-use crate::authz::{require_resource, ResourceAuthority, ResourceAuthzError, ResourceRef};
+use crate::authz::{ResourceAuthority, ResourceAuthzError, ResourceRef, require_resource};
 use crate::pool::Pool;
 use crate::wire::ResourceRole;
 

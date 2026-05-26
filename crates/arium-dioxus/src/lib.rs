@@ -80,7 +80,7 @@ pub use arium::ApiKeyUser;
 // their own membership table (like dx_standup's `board_members`) leave the
 // `sql-membership` feature off and never link these.
 #[cfg(all(feature = "server", feature = "sql-membership"))]
-pub use arium::{membership_migrator, SqlMembershipStore};
+pub use arium::{SqlMembershipStore, membership_migrator};
 
 /// Extract just the human-readable message from a server-fn error captured
 /// on the client. The `CapturedError` Display wraps the original

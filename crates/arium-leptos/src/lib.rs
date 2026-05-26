@@ -78,7 +78,7 @@ pub use arium::ApiKeyUser;
 // Bundled per-resource membership store + migrator. Opt-in (off for apps that
 // own their own membership table).
 #[cfg(all(feature = "ssr", feature = "sql-membership"))]
-pub use arium::{membership_migrator, SqlMembershipStore};
+pub use arium::{SqlMembershipStore, membership_migrator};
 
 /// Extract just the human-readable message from a server-fn error surfaced on
 /// the client. Leptos wraps server errors as

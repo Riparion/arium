@@ -56,9 +56,9 @@ pub use permissions::{
     use_permissions,
 };
 pub use require_auth::RequireAuth;
-pub use resource_gate::{ResourceGate, use_resource_role};
 #[cfg(feature = "mail")]
 pub use reset_password::ResetPassword;
+pub use resource_gate::{ResourceGate, use_resource_role};
 #[cfg(feature = "tokens")]
 pub use tokens::ApiTokens;
 pub use verify_email::VerifyEmail;

@@ -5,11 +5,11 @@
 
 use arium_authz::authz::{ResourceAuthority, ResourceRef};
 use arium_authz::membership::{
-    grant_membership, revoke_membership, transfer_ownership, Membership, MembershipError,
-    MembershipStore, TxExec,
+    Membership, MembershipError, MembershipStore, TxExec, grant_membership, revoke_membership,
+    transfer_ownership,
 };
 use arium_authz::pool::Pool;
-use arium_authz::{require_resource, ResourceRole};
+use arium_authz::{ResourceRole, require_resource};
 use async_trait::async_trait;
 
 const KIND: &str = "doc";
@@ -188,12 +188,16 @@ async fn enforcement_and_lifecycle_without_an_auth_schema() {
 
     // Enforcement: the owner clears the Manager bar; a stranger is denied even
     // Viewer (default-deny).
-    assert!(require_resource(&Store, &pool, 100, r, ResourceRole::Manager)
-        .await
-        .is_ok());
-    assert!(require_resource(&Store, &pool, 999, r, ResourceRole::Viewer)
-        .await
-        .is_err());
+    assert!(
+        require_resource(&Store, &pool, 100, r, ResourceRole::Manager)
+            .await
+            .is_ok()
+    );
+    assert!(
+        require_resource(&Store, &pool, 999, r, ResourceRole::Viewer)
+            .await
+            .is_err()
+    );
 
     // Lifecycle: owner grants an editor.
     grant_membership(&Store, &pool, 100, r, 200, ResourceRole::Editor)

@@ -270,10 +270,7 @@ impl AuthConfigBuilder {
     ///     .resource_authority(authority)
     ///     .build()?;
     /// ```
-    pub fn resource_authority(
-        mut self,
-        authority: crate::authz::SharedResourceAuthority,
-    ) -> Self {
+    pub fn resource_authority(mut self, authority: crate::authz::SharedResourceAuthority) -> Self {
         self.resource_authority = Some(authority);
         self
     }

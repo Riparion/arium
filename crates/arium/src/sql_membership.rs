@@ -48,11 +48,7 @@ impl ResourceAuthority for SqlMembershipStore {
 
 #[async_trait]
 impl MembershipStore for SqlMembershipStore {
-    async fn list_members(
-        &self,
-        db: &Pool,
-        r: ResourceRef<'_>,
-    ) -> anyhow::Result<Vec<Membership>> {
+    async fn list_members(&self, db: &Pool, r: ResourceRef<'_>) -> anyhow::Result<Vec<Membership>> {
         let rows: Vec<(i64, String)> = sqlx::query_as(
             "SELECT user_id, role FROM arium_resource_members \
              WHERE kind = $1 AND resource_id = $2 ORDER BY user_id",

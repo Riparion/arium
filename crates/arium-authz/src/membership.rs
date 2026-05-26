@@ -97,8 +97,11 @@ pub struct Membership {
 #[async_trait]
 pub trait MembershipStore: ResourceAuthority {
     /// Every member of `resource` and the role each holds.
-    async fn list_members(&self, db: &Pool, resource: ResourceRef<'_>)
-        -> anyhow::Result<Vec<Membership>>;
+    async fn list_members(
+        &self,
+        db: &Pool,
+        resource: ResourceRef<'_>,
+    ) -> anyhow::Result<Vec<Membership>>;
 
     /// Ids of every resource of `kind` on which `user_id` holds at least
     /// `min_role` — the reverse of `role_on`, for "what can this user see?"

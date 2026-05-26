@@ -59,7 +59,7 @@ async fn global_permission_is_the_escape_hatch() {
         &pool,
         uid,
         ResourceRef::new(BOARD, 1),
-        ResourceRole::Admin,
+        ResourceRole::Manager,
         "boards:superadmin",
     )
     .await
@@ -74,7 +74,7 @@ async fn neither_axis_is_forbidden() {
     let pool = common::pool().await;
     TableAuthority::create_table(&pool).await;
     let uid = common::make_user(&pool, "a@example.invalid", "password123").await;
-    TableAuthority::grant(&pool, uid, BOARD, 1, "viewer").await; // below Admin
+    TableAuthority::grant(&pool, uid, BOARD, 1, "viewer").await; // below Manager
     grant_permission(&pool, uid, "some:other:token").await; // not the one required
 
     let res = require_resource_or_permission(
@@ -82,7 +82,7 @@ async fn neither_axis_is_forbidden() {
         &pool,
         uid,
         ResourceRef::new(BOARD, 1),
-        ResourceRole::Admin,
+        ResourceRole::Manager,
         "boards:superadmin",
     )
     .await;
@@ -102,7 +102,7 @@ async fn resource_lookup_failure_does_not_fall_through() {
         &pool,
         uid,
         ResourceRef::new(BOARD, 1),
-        ResourceRole::Admin,
+        ResourceRole::Manager,
         "boards:superadmin",
     )
     .await;

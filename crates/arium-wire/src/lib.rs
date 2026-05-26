@@ -312,7 +312,10 @@ pub enum ResourceRole {
     /// Can read and modify the resource's contents.
     Editor,
     /// Editor, plus management of the resource itself (membership, settings).
-    Admin,
+    /// Named `Manager` (not `Admin`) so the resource tier never collides with
+    /// the global RBAC "admin" *permission* — see the `authz` module's
+    /// vocabulary note.
+    Manager,
     /// Full control, including destructive actions and ownership transfer.
     Owner,
 }
@@ -326,12 +329,12 @@ impl ResourceRole {
     }
 
     /// The canonical lowercase string for this role (`"viewer"`, `"editor"`,
-    /// `"admin"`, `"owner"`) — the form membership stores persist.
+    /// `"manager"`, `"owner"`) — the form membership stores persist.
     pub fn as_str(self) -> &'static str {
         match self {
             ResourceRole::Viewer => "viewer",
             ResourceRole::Editor => "editor",
-            ResourceRole::Admin => "admin",
+            ResourceRole::Manager => "manager",
             ResourceRole::Owner => "owner",
         }
     }
@@ -339,10 +342,14 @@ impl ResourceRole {
     /// Parse a stored role string. Intended for values written by [`as_str`](Self::as_str);
     /// an unrecognized string maps to the lowest tier ([`ResourceRole::Viewer`])
     /// so corrupt data never silently escalates privilege.
+    ///
+    /// `"admin"` is accepted as a legacy alias for [`ResourceRole::Manager`]:
+    /// the tier was renamed from `Admin`, and rows written before the rename
+    /// must keep their privilege rather than lossily fall to `Viewer`.
     pub fn from_str_lossy(s: &str) -> Self {
         match s {
             "owner" => ResourceRole::Owner,
-            "admin" => ResourceRole::Admin,
+            "manager" | "admin" => ResourceRole::Manager,
             "editor" => ResourceRole::Editor,
             _ => ResourceRole::Viewer,
         }
@@ -355,7 +362,7 @@ mod resource_role_tests {
 
     #[test]
     fn lattice_is_ordered() {
-        assert!(Owner > Admin && Admin > Editor && Editor > Viewer);
+        assert!(Owner > Manager && Manager > Editor && Editor > Viewer);
         assert!(Editor.at_least(Viewer));
         assert!(Editor.at_least(Editor));
         assert!(!Viewer.at_least(Editor));
@@ -367,5 +374,14 @@ mod resource_role_tests {
         assert_eq!(j, "\"Editor\"");
         let back: super::ResourceRole = serde_json::from_str(&j).unwrap();
         assert_eq!(back, Editor);
+    }
+
+    #[test]
+    fn manager_round_trips_and_admin_is_a_legacy_alias() {
+        use super::ResourceRole;
+        assert_eq!(ResourceRole::Manager.as_str(), "manager");
+        assert_eq!(ResourceRole::from_str_lossy("manager"), Manager);
+        // Rows written before the Admin→Manager rename keep their privilege.
+        assert_eq!(ResourceRole::from_str_lossy("admin"), Manager);
     }
 }

@@ -16,7 +16,7 @@
 //! (read a role, count holders, upsert, remove, enumerate); arium supplies the
 //! *composites* that sequence them safely:
 //!
-//! - [`grant_membership`] — actor must hold ≥ `Admin` and cannot grant a role
+//! - [`grant_membership`] — actor must hold ≥ `Manager` and cannot grant a role
 //!   above their own.
 //! - [`revoke_membership`] — refuses to remove the **sole `Owner`**
 //!   ([`MembershipError::LastOwner`]); this is the orphan-resource guard.
@@ -157,7 +157,7 @@ pub enum MembershipError {
     NotOwner,
     /// The target user has no membership of the resource.
     NotAMember,
-    /// The actor may not perform this grant — below `Admin`, or attempting to
+    /// The actor may not perform this grant — below `Manager`, or attempting to
     /// grant a role above their own.
     Forbidden,
     /// A storage operation failed (begin/commit or a primitive). Distinct from
@@ -187,14 +187,14 @@ fn lookup(e: impl Into<anyhow::Error>) -> MembershipError {
 
 /// Grant `target_id` the role `role` on `resource`, acting as `actor_id`.
 ///
-/// The actor must hold at least [`ResourceRole::Admin`] on the resource and may
-/// not grant a role above their own (an `Admin` can't mint an `Owner`).
+/// The actor must hold at least [`ResourceRole::Manager`] on the resource and may
+/// not grant a role above their own (an `Manager` can't mint an `Owner`).
 /// Idempotent: re-granting updates the existing role.
 ///
 /// Because a grant is also how a role is *lowered*, two further invariants
 /// guard the existing target:
 ///
-/// - The actor may not modify a member who outranks them — an `Admin` cannot
+/// - The actor may not modify a member who outranks them — an `Manager` cannot
 ///   demote an `Owner` ([`MembershipError::Forbidden`]). Only the granted role
 ///   is bounded by the actor's tier; the target's *current* role is checked
 ///   here so the management ladder can't be climbed sideways.
@@ -219,7 +219,7 @@ pub async fn grant_membership(
         .await
         .map_err(MembershipError::Lookup)?;
     let actor = match actor {
-        Some(a) if a.at_least(ResourceRole::Admin) && a >= role => a,
+        Some(a) if a.at_least(ResourceRole::Manager) && a >= role => a,
         _ => return Err(MembershipError::Forbidden),
     };
 
@@ -298,13 +298,13 @@ pub async fn revoke_membership(
 
 /// Transfer ownership of `resource` from `from_id` to `to_id`: the new owner is
 /// promoted to [`ResourceRole::Owner`] and the previous owner demoted to
-/// [`ResourceRole::Admin`], atomically. `from_id` must currently be an `Owner`
+/// [`ResourceRole::Manager`], atomically. `from_id` must currently be an `Owner`
 /// ([`MembershipError::NotOwner`] otherwise).
 ///
 /// Transferring to oneself (`from_id == to_id`) is a no-op: the caller already
 /// holds `Owner`, and running the promote/demote pair against a single row
 /// would collapse to a net demotion (upsert `to` → `Owner`, then `from` →
-/// `Admin` on the *same* row) — orphaning the resource. Guarded explicitly.
+/// `Manager` on the *same* row) — orphaning the resource. Guarded explicitly.
 pub async fn transfer_ownership(
     store: &dyn MembershipStore,
     db: &Pool,
@@ -333,7 +333,7 @@ pub async fn transfer_ownership(
         .await
         .map_err(MembershipError::Lookup)?;
     store
-        .upsert_role(&mut tx, resource, from_id, ResourceRole::Admin)
+        .upsert_role(&mut tx, resource, from_id, ResourceRole::Manager)
         .await
         .map_err(MembershipError::Lookup)?;
 

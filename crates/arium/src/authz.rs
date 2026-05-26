@@ -16,9 +16,10 @@
 //! one resource* ([`ResourceRole`]). Both have a level people informally call
 //! "admin" — they are not the same thing, and arium never lets them share a
 //! name in code: an app-wide capability is a permission token
-//! (`Rights::permission("...")`); a resource tier is [`ResourceRole::Admin`].
-//! Say *Admin role* for "manages this one board", *permission* for "an app-wide
-//! capability" — never bare "admin".
+//! (`Rights::permission("...")`); a resource tier is [`ResourceRole::Manager`].
+//! Say *Manager role* for "manages this one board", *permission* for "an app-wide
+//! capability" — never bare "admin". (The tier was named `Admin` before this
+//! collision was resolved; `"admin"` survives only as a legacy storage alias.)
 //!
 //! | Gating…                                              | Use                                       | Trust model                  |
 //! |------------------------------------------------------|-------------------------------------------|------------------------------|
@@ -63,7 +64,7 @@
 //!         .fetch_optional(db).await?;
 //!         Ok(role.map(|r| match r.as_str() {
 //!             "owner" => ResourceRole::Owner,
-//!             "admin" => ResourceRole::Admin,
+//!             "manager" => ResourceRole::Manager,
 //!             "editor" => ResourceRole::Editor,
 //!             _ => ResourceRole::Viewer,
 //!         }))

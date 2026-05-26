@@ -68,7 +68,7 @@ async fn revoking_a_non_member_reports_not_a_member() {
     assert!(matches!(res, Err(MembershipError::NotAMember)));
 }
 
-/// Transfer atomically promotes the new owner and demotes the old one to Admin.
+/// Transfer atomically promotes the new owner and demotes the old one to Manager.
 #[tokio::test]
 async fn transfer_promotes_and_demotes_atomically() {
     let pool = common::pool().await;
@@ -95,8 +95,8 @@ async fn transfer_promotes_and_demotes_atomically() {
             .role_on(&pool, old, ResourceRef::new(BOARD, 1))
             .await
             .unwrap(),
-        Some(ResourceRole::Admin),
-        "the previous owner is demoted to Admin, never left dangling as Owner",
+        Some(ResourceRole::Manager),
+        "the previous owner is demoted to Manager, never left dangling as Owner",
     );
 
     // The transferred-to user, now sole Owner, then cannot be revoked.
@@ -111,7 +111,7 @@ async fn only_an_owner_can_transfer() {
     TableAuthority::create_table(&pool).await;
     let admin = common::make_user(&pool, "admin@example.invalid", "password123").await;
     let other = common::make_user(&pool, "other@example.invalid", "password123").await;
-    TableAuthority::grant(&pool, admin, BOARD, 1, "admin").await;
+    TableAuthority::grant(&pool, admin, BOARD, 1, "manager").await;
     TableAuthority::grant(&pool, other, BOARD, 1, "editor").await;
 
     let res =
@@ -119,7 +119,7 @@ async fn only_an_owner_can_transfer() {
     assert!(matches!(res, Err(MembershipError::NotOwner)));
 }
 
-/// An Admin may grant up to their own role but not mint an Owner; a sub-Admin
+/// An Manager may grant up to their own role but not mint an Owner; a sub-Manager
 /// may not grant at all.
 #[tokio::test]
 async fn grant_respects_actor_authority() {
@@ -128,10 +128,10 @@ async fn grant_respects_actor_authority() {
     let admin = common::make_user(&pool, "admin@example.invalid", "password123").await;
     let editor = common::make_user(&pool, "editor@example.invalid", "password123").await;
     let target = common::make_user(&pool, "target@example.invalid", "password123").await;
-    TableAuthority::grant(&pool, admin, BOARD, 1, "admin").await;
+    TableAuthority::grant(&pool, admin, BOARD, 1, "manager").await;
     TableAuthority::grant(&pool, editor, BOARD, 1, "editor").await;
 
-    // Admin grants Editor — allowed (Editor <= Admin).
+    // Manager grants Editor — allowed (Editor <= Manager).
     grant_membership(
         &TableAuthority,
         &pool,
@@ -150,7 +150,7 @@ async fn grant_respects_actor_authority() {
         Some(ResourceRole::Editor),
     );
 
-    // Admin tries to grant Owner — refused (above their own role).
+    // Manager tries to grant Owner — refused (above their own role).
     let res = grant_membership(
         &TableAuthority,
         &pool,
@@ -162,7 +162,7 @@ async fn grant_respects_actor_authority() {
     .await;
     assert!(
         matches!(res, Err(MembershipError::Forbidden)),
-        "an Admin must not be able to mint an Owner",
+        "an Manager must not be able to mint an Owner",
     );
 
     // An Editor can't grant at all.
@@ -194,7 +194,7 @@ async fn grant_cannot_demote_the_sole_owner() {
         owner,
         ResourceRef::new(BOARD, 1),
         owner,
-        ResourceRole::Admin,
+        ResourceRole::Manager,
     )
     .await;
     assert!(
@@ -229,7 +229,7 @@ async fn grant_can_demote_a_non_last_owner() {
         a,
         ResourceRef::new(BOARD, 1),
         b,
-        ResourceRole::Admin,
+        ResourceRole::Manager,
     )
     .await
     .expect("an owner can demote a co-owner while one owner remains");
@@ -238,12 +238,12 @@ async fn grant_can_demote_a_non_last_owner() {
             .role_on(&pool, b, ResourceRef::new(BOARD, 1))
             .await
             .unwrap(),
-        Some(ResourceRole::Admin),
+        Some(ResourceRole::Manager),
     );
 }
 
-/// An `Admin` may not modify a member who outranks them — no demoting the
-/// `Owner` down to `Admin` (which the actor-tier check alone would permit,
+/// An `Manager` may not modify a member who outranks them — no demoting the
+/// `Owner` down to `Manager` (which the actor-tier check alone would permit,
 /// since the *granted* role equals the actor's).
 #[tokio::test]
 async fn admin_cannot_modify_an_owner() {
@@ -252,7 +252,7 @@ async fn admin_cannot_modify_an_owner() {
     let owner = common::make_user(&pool, "owner@example.invalid", "password123").await;
     let admin = common::make_user(&pool, "admin@example.invalid", "password123").await;
     TableAuthority::grant(&pool, owner, BOARD, 1, "owner").await;
-    TableAuthority::grant(&pool, admin, BOARD, 1, "admin").await;
+    TableAuthority::grant(&pool, admin, BOARD, 1, "manager").await;
 
     let res = grant_membership(
         &TableAuthority,
@@ -260,7 +260,7 @@ async fn admin_cannot_modify_an_owner() {
         admin,
         ResourceRef::new(BOARD, 1),
         owner,
-        ResourceRole::Admin,
+        ResourceRole::Manager,
     )
     .await;
     assert!(
@@ -278,7 +278,7 @@ async fn admin_cannot_modify_an_owner() {
 }
 
 /// Transferring ownership to oneself is a no-op, not a self-demotion: the sole
-/// owner stays the owner rather than collapsing to `Admin` (0 owners).
+/// owner stays the owner rather than collapsing to `Manager` (0 owners).
 #[tokio::test]
 async fn transfer_to_self_is_a_noop() {
     let pool = common::pool().await;
@@ -331,7 +331,7 @@ async fn sql_membership_store_roundtrip() {
     let a = common::make_user(&pool, "a@example.invalid", "password123").await;
     let b = common::make_user(&pool, "b@example.invalid", "password123").await;
 
-    // The app seeds the creator as the first Owner directly (no actor has Admin
+    // The app seeds the creator as the first Owner directly (no actor has Manager
     // yet to go through `grant_membership`).
     sqlx::query(
         "INSERT INTO arium_resource_members (kind, resource_id, user_id, role) \
@@ -360,7 +360,7 @@ async fn sql_membership_store_roundtrip() {
         .unwrap();
     assert_eq!(members.len(), 2);
 
-    // Transfer to b, then b (now sole owner) can't be revoked, but a (now Admin) can.
+    // Transfer to b, then b (now sole owner) can't be revoked, but a (now Manager) can.
     transfer_ownership(&SqlMembershipStore, &pool, ResourceRef::new(BOARD, 7), a, b)
         .await
         .expect("owner transfers");

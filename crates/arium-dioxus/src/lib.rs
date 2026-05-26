@@ -65,13 +65,22 @@ pub use arium::RateLimitConfig;
 pub use arium::oauth;
 #[cfg(feature = "server")]
 pub use arium::{
-    AuditConfig, AuditCtx, AuthConfig, AuthConfigBuilder, AuthzCtx, Membership, MembershipError,
-    MembershipStore, ResourceAuthority, ResourceAuthorityExt, ResourceAuthzError, ResourceGrant,
-    ResourceRef, SessionStore, SharedResourceAuthority, SqlMembershipStore, TxExec, auth, authz,
+    AuditConfig, AuditCtx, AuthConfig, AuthConfigBuilder, AuthUser, AuthzCtx, Membership,
+    MembershipError, MembershipStore, ResourceAuthority, ResourceAuthorityExt, ResourceAuthzError,
+    ResourceGrant, ResourceRef, SessionStore, SharedResourceAuthority, TxExec, auth, authz,
     grant_membership, install, membership, migrator, pool, require_resource,
     require_resource_audited, require_resource_or_permission, revoke_membership,
     transfer_ownership,
 };
+// Bearer-token auth: the `ApiKeyUser` extension the `AuthUser`/`AuthzCtx`
+// extractors honor. The middleware that injects it is applied by `install`.
+#[cfg(all(feature = "server", feature = "tokens"))]
+pub use arium::ApiKeyUser;
+// Bundled per-resource membership store + its migrator. Opt-in: apps that own
+// their own membership table (like dx_standup's `board_members`) leave the
+// `sql-membership` feature off and never link these.
+#[cfg(all(feature = "server", feature = "sql-membership"))]
+pub use arium::{membership_migrator, SqlMembershipStore};
 
 /// Extract just the human-readable message from a server-fn error captured
 /// on the client. The `CapturedError` Display wraps the original

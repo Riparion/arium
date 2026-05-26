@@ -15,7 +15,7 @@ readme = "README.md"
 path = "src/lib.rs"
 
 [features]
-default = ["sqlite", "oauth-github", "mfa", "mail", "ratelimit", "tokens"]
+default = ["sqlite", "oauth-github", "mfa", "mail", "ratelimit", "tokens", "sql-membership"]
 
 # Backend selection — pick exactly one. Forwarded to arium-pool (the shared
 # source of truth for the Pool type + backend guard) and arium-authz; the
@@ -45,6 +45,14 @@ mfa = ["dep:totp-rs"]
 mail = ["dep:lettre"]
 ratelimit = ["dep:tower_governor"]
 tokens = ["dep:sha2"]
+
+# Batteries-included per-resource membership storage: the `SqlMembershipStore`
+# over the `arium_resource_members` table, plus the `membership_migrator()` that
+# creates it. Apps that own their own membership table (and implement
+# `MembershipStore` over it) turn this OFF so the table is never created — the
+# `dead table` is opt-in, not forced on every consumer. Needs `lifecycle`,
+# already pulled by the backend feature.
+sql-membership = []
 
 [dependencies]
 arium-wire = { workspace = true }

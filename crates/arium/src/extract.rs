@@ -123,8 +123,64 @@ impl<S: Send + Sync> axum::extract::FromRequestParts<S> for AuditCtx {
     }
 }
 
-/// One-stop resource-authz context for server fns: it bundles the session
-/// (resolved to the caller's user id), the db pool, the app's
+/// Resolve the acting user id from the request: the bearer-token
+/// [`ApiKeyUser`](crate::api_key::ApiKeyUser) extension (preferred, when the
+/// `tokens` feature is on and [`install`](crate::install) layered the
+/// middleware) then the session cookie. Anonymous / unauthenticated callers
+/// resolve to `None`. Shared by [`AuthUser`] and [`AuthzCtx`] so both honor API
+/// tokens identically.
+async fn resolve_user_id<S: Send + Sync>(
+    parts: &mut axum::http::request::Parts,
+    state: &S,
+) -> Option<i64> {
+    #[cfg(feature = "tokens")]
+    if let Some(api) = parts.extensions.get::<crate::api_key::ApiKeyUser>() {
+        return Some(api.user_id);
+    }
+    match <crate::auth::Session as axum::extract::FromRequestParts<S>>::from_request_parts(
+        parts, state,
+    )
+    .await
+    {
+        Ok(session) => session
+            .current_user
+            .as_ref()
+            .filter(|u| !u.anonymous)
+            .map(|u| u.id as i64),
+        Err(_) => None,
+    }
+}
+
+/// The authenticated acting user for a server fn — resolved from an API token
+/// (`Authorization: Bearer`, when the `tokens` feature is on) or the session
+/// cookie, via [`resolve_user_id`]. Extraction rejects with `401` when neither
+/// path yields a non-anonymous user, so a handler can take `user: AuthUser` and
+/// trust `user.id` is a real, logged-in caller.
+///
+/// This replaces the bespoke "API-key-or-session" extractor apps used to hand-
+/// roll on top of arium's session: depend on `tokens` and take `AuthUser`.
+#[derive(Clone, Copy, Debug)]
+pub struct AuthUser {
+    /// The authenticated caller's user id.
+    pub id: i64,
+}
+
+impl<S: Send + Sync> axum::extract::FromRequestParts<S> for AuthUser {
+    type Rejection = (axum::http::StatusCode, &'static str);
+
+    async fn from_request_parts(
+        parts: &mut axum::http::request::Parts,
+        state: &S,
+    ) -> Result<Self, Self::Rejection> {
+        match resolve_user_id(parts, state).await {
+            Some(id) => Ok(AuthUser { id }),
+            None => Err((axum::http::StatusCode::UNAUTHORIZED, "not logged in")),
+        }
+    }
+}
+
+/// One-stop resource-authz context for server fns: it bundles the caller's user
+/// id (resolved from an API token or the session), the db pool, the app's
 /// [`ResourceAuthority`](crate::authz::ResourceAuthority), and an [`AuditCtx`],
 /// so a handler authorizes a resource action in a single line:
 ///
@@ -137,10 +193,10 @@ impl<S: Send + Sync> axum::extract::FromRequestParts<S> for AuditCtx {
 /// }
 /// ```
 ///
-/// This is the documented general-case guard. Apps with a bespoke auth context
-/// (e.g. one that also accepts API keys) can replicate [`AuthzCtx::require`]
-/// against their own context type — it's a thin wrapper over
-/// [`require_resource`](crate::authz::require_resource).
+/// This is the documented general-case guard. It honors API tokens out of the
+/// box — the caller is resolved from the bearer-token extension (when the
+/// `tokens` feature is on) before the session — so the same guard covers both
+/// browser and programmatic clients.
 ///
 /// Rejects with `500` when the db pool or authority extension is missing — a
 /// wiring bug, surfaced loudly rather than as a silent deny.
@@ -230,16 +286,10 @@ impl<S: Send + Sync> axum::extract::FromRequestParts<S> for AuthzCtx {
                 "resource authority not registered",
             ))?;
 
-        // Resolve the caller. A missing/anonymous session is not an error here
-        // — it becomes a `None` user id that `require` denies.
-        let user_id = match <crate::auth::Session as axum::extract::FromRequestParts<S>>::from_request_parts(parts, state).await {
-            Ok(session) => session
-                .current_user
-                .as_ref()
-                .filter(|u| !u.anonymous)
-                .map(|u| u.id as i64),
-            Err(_) => None,
-        };
+        // Resolve the caller (API token, then session). A missing/anonymous
+        // caller is not an error here — it becomes a `None` user id that
+        // `require` denies.
+        let user_id = resolve_user_id(parts, state).await;
 
         Ok(AuthzCtx {
             user_id,

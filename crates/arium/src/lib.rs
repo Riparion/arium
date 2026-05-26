@@ -60,14 +60,22 @@ pub mod config;
 pub mod extract;
 pub mod pool;
 mod authz_bridge;
+#[cfg(feature = "sql-membership")]
 mod sql_membership;
+
+/// Bearer-token authentication: the axum middleware that turns an
+/// `Authorization: Bearer <token>` header into an [`api_key::ApiKeyUser`]
+/// request extension, applied automatically by [`install`]. Gated on `tokens`
+/// (it hashes the presented token with `auth::tokens`).
+#[cfg(feature = "tokens")]
+pub mod api_key;
 
 mod install;
 
 /// Per-resource authorization, re-exported from the standalone [`arium_authz`]
 /// crate so `arium::authz::*` and `arium::membership::*` keep resolving for
 /// existing code (and the framework adapters). The global↔resource bridge
-/// ([`require_resource_or_permission`]) and the bundled [`SqlMembershipStore`]
+/// (`require_resource_or_permission`) and the bundled `SqlMembershipStore`
 /// stay in this crate — they touch the auth engine and its schema.
 pub use arium_authz::{authz, membership};
 
@@ -92,8 +100,11 @@ pub use arium_authz::{
 // The global↔resource composition bridge lives here (it reads the auth
 // engine's permission set).
 pub use authz_bridge::{require_resource_audited, require_resource_or_permission, ResourceGrant};
+#[cfg(feature = "sql-membership")]
 pub use sql_membership::SqlMembershipStore;
-pub use extract::{AuditCtx, AuthzCtx, ResourceAuthorityExt, SessionStore};
+pub use extract::{AuditCtx, AuthUser, AuthzCtx, ResourceAuthorityExt, SessionStore};
+#[cfg(feature = "tokens")]
+pub use api_key::ApiKeyUser;
 pub use install::install;
 
 /// Returns the embedded migrator that creates the `users`, `oauth_accounts`,
@@ -104,6 +115,12 @@ pub use install::install;
 /// ```rust,ignore
 /// arium::migrator().run(&pool).await?;
 /// ```
+///
+/// This migrator does **not** create the `arium_resource_members` table; that
+/// lives in [`membership_migrator`] (the `sql-membership` feature) so apps that
+/// own their own membership table never get a dead table. Run both migrators
+/// (core first — `arium_resource_members` has an FK to `users`) when using the
+/// bundled [`SqlMembershipStore`](sql_membership::SqlMembershipStore).
 ///
 /// Returned with `ignore_missing = true` so consumers can keep their own
 /// domain migrations in the same `_sqlx_migrations` table without the
@@ -122,6 +139,36 @@ pub fn migrator() -> sqlx::migrate::Migrator {
 #[cfg(feature = "postgres")]
 pub fn migrator() -> sqlx::migrate::Migrator {
     let mut m = sqlx::migrate!("./migrations/postgres");
+    m.set_ignore_missing(true);
+    m
+}
+
+/// Returns the migrator that creates the `arium_resource_members` table backing
+/// the bundled [`SqlMembershipStore`](sql_membership::SqlMembershipStore).
+///
+/// Separate from [`migrator`] so this table is opt-in: only apps that actually
+/// use the bundled store (the `sql-membership` feature) ever create it. Run it
+/// *after* [`migrator`] — the table has an FK to `users`:
+///
+/// ```rust,ignore
+/// arium::migrator().run(&pool).await?;
+/// arium::membership_migrator().run(&pool).await?;
+/// ```
+///
+/// `ignore_missing = true` for the same cross-migrator coexistence reason as
+/// [`migrator`] (it shares the `_sqlx_migrations` table).
+#[cfg(all(feature = "sql-membership", feature = "sqlite"))]
+pub fn membership_migrator() -> sqlx::migrate::Migrator {
+    let mut m = sqlx::migrate!("./migrations-membership/sqlite");
+    m.set_ignore_missing(true);
+    m
+}
+
+/// Returns the membership migrator. See the sqlite-feature variant for the
+/// full doc — same contract, postgres dialect.
+#[cfg(all(feature = "sql-membership", feature = "postgres"))]
+pub fn membership_migrator() -> sqlx::migrate::Migrator {
+    let mut m = sqlx::migrate!("./migrations-membership/postgres");
     m.set_ignore_missing(true);
     m
 }

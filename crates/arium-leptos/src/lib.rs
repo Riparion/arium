@@ -65,12 +65,20 @@ pub use arium::RateLimitConfig;
 pub use arium::oauth;
 #[cfg(feature = "ssr")]
 pub use arium::{
-    AuditConfig, AuditCtx, AuthConfig, AuthConfigBuilder, AuthzCtx, Membership, MembershipError,
-    MembershipStore, ResourceAuthority, ResourceAuthorityExt, ResourceAuthzError, ResourceGrant,
-    ResourceRef, SessionStore, SharedResourceAuthority, SqlMembershipStore, TxExec, auth, authz,
+    AuditConfig, AuditCtx, AuthConfig, AuthConfigBuilder, AuthUser, AuthzCtx, Membership,
+    MembershipError, MembershipStore, ResourceAuthority, ResourceAuthorityExt, ResourceAuthzError,
+    ResourceGrant, ResourceRef, SessionStore, SharedResourceAuthority, TxExec, auth, authz,
     grant_membership, install, membership, migrator, pool, require_resource,
     require_resource_or_permission, revoke_membership, transfer_ownership,
 };
+// Bearer-token auth: the `ApiKeyUser` extension the `AuthUser`/`AuthzCtx`
+// extractors honor (middleware applied by `install`).
+#[cfg(all(feature = "ssr", feature = "tokens"))]
+pub use arium::ApiKeyUser;
+// Bundled per-resource membership store + migrator. Opt-in (off for apps that
+// own their own membership table).
+#[cfg(all(feature = "ssr", feature = "sql-membership"))]
+pub use arium::{membership_migrator, SqlMembershipStore};
 
 /// Extract just the human-readable message from a server-fn error surfaced on
 /// the client. Leptos wraps server errors as

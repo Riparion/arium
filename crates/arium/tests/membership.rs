@@ -8,7 +8,9 @@ use arium::membership::{
     grant_membership, revoke_membership, transfer_ownership, MembershipError, MembershipStore,
 };
 use arium::authz::{ResourceAuthority, ResourceRef};
-use arium::{ResourceRole, SqlMembershipStore};
+use arium::ResourceRole;
+#[cfg(feature = "sql-membership")]
+use arium::SqlMembershipStore;
 use common::test_authority::TableAuthority;
 
 const BOARD: &str = "board";
@@ -325,6 +327,7 @@ async fn list_resources_for_user_filters_by_min_role() {
 
 /// The bundled `SqlMembershipStore` over `arium_resource_members` exercises the
 /// migration, the `ON CONFLICT` upsert, and every composite end-to-end.
+#[cfg(feature = "sql-membership")]
 #[tokio::test]
 async fn sql_membership_store_roundtrip() {
     let pool = common::pool().await;

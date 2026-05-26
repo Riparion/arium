@@ -29,9 +29,16 @@ pub async fn pool() -> SqlitePool {
 }
 
 async fn run_migrations(pool: &SqlitePool) {
-    let dir: PathBuf = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("migrations")
-        .join("sqlite");
+    let base = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    apply_dir(pool, base.join("migrations").join("sqlite")).await;
+    // The `arium_resource_members` table moved to its own opt-in migrator
+    // (the `sql-membership` feature). Apply it too when that feature is on, so
+    // the `SqlMembershipStore` roundtrip test has its table.
+    #[cfg(feature = "sql-membership")]
+    apply_dir(pool, base.join("migrations-membership").join("sqlite")).await;
+}
+
+async fn apply_dir(pool: &SqlitePool, dir: PathBuf) {
     let mut entries = std::fs::read_dir(&dir)
         .unwrap_or_else(|e| panic!("read_dir {}: {e}", dir.display()))
         .filter_map(Result::ok)

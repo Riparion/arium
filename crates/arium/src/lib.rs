@@ -91,7 +91,7 @@ pub use arium_authz::{
 };
 // The global↔resource composition bridge lives here (it reads the auth
 // engine's permission set).
-pub use authz_bridge::{require_resource_or_permission, ResourceGrant};
+pub use authz_bridge::{require_resource_audited, require_resource_or_permission, ResourceGrant};
 pub use sql_membership::SqlMembershipStore;
 pub use extract::{AuditCtx, AuthzCtx, ResourceAuthorityExt, SessionStore};
 pub use install::install;

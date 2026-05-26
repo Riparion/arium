@@ -7,7 +7,9 @@ mod common;
 use arium::authz::{require_resource, ResourceAuthzError, ResourceRef};
 // The global↔resource bridge lives at the arium crate root (it reads the auth
 // engine's permission set), not under `arium::authz`.
-use arium::{require_resource_or_permission, ResourceGrant, ResourceRole};
+use arium::{
+    require_resource_audited, require_resource_or_permission, AuditCtx, ResourceGrant, ResourceRole,
+};
 use common::test_authority::{FailingAuthority, TableAuthority};
 
 const BOARD: &str = "board";
@@ -229,5 +231,99 @@ async fn check_is_fresh_no_caching() {
             Err(ResourceAuthzError::Forbidden)
         ),
         "revocation must take effect on the next request",
+    );
+}
+
+// --- require_resource_audited: the reusable audit-on-denial kernel ----------
+
+/// Count `resource.access.denied` rows attributed to `actor`, and return the
+/// most recent one's `details` blob for shape assertions.
+async fn denied_rows(pool: &sqlx::SqlitePool, actor: i64) -> Vec<String> {
+    sqlx::query_scalar::<_, String>(
+        "SELECT COALESCE(details, '') FROM audit_events \
+         WHERE event_type = 'resource.access.denied' AND actor_id = $1 \
+         ORDER BY id",
+    )
+    .bind(actor)
+    .fetch_all(pool)
+    .await
+    .expect("read audit rows")
+}
+
+/// A denial writes exactly one `resource.access.denied` row, attributed to the
+/// caller, whose details carry the resource and the *lowercase* required role.
+#[tokio::test]
+async fn audited_denial_writes_one_row() {
+    let pool = common::pool().await;
+    TableAuthority::create_table(&pool).await;
+    let uid = common::make_user(&pool, "a@example.invalid", "password123").await;
+    TableAuthority::grant(&pool, uid, BOARD, 1, "viewer").await; // below Manager
+
+    let res = require_resource_audited(
+        &TableAuthority,
+        &pool,
+        &AuditCtx::default(),
+        uid,
+        ResourceRef::new(BOARD, 1),
+        ResourceRole::Manager,
+    )
+    .await;
+    assert!(matches!(res, Err(ResourceAuthzError::Forbidden)));
+
+    let rows = denied_rows(&pool, uid).await;
+    assert_eq!(rows.len(), 1, "a denial must leave exactly one audit row");
+    assert!(
+        rows[0].contains("\"min_role\":\"manager\""),
+        "details must record the canonical lowercase role, got: {}",
+        rows[0],
+    );
+    assert!(rows[0].contains("\"kind\":\"board\"") && rows[0].contains("\"id\":1"));
+}
+
+/// A successful check returns the user id and writes no audit row.
+#[tokio::test]
+async fn audited_success_is_silent() {
+    let pool = common::pool().await;
+    TableAuthority::create_table(&pool).await;
+    let uid = common::make_user(&pool, "a@example.invalid", "password123").await;
+    TableAuthority::grant(&pool, uid, BOARD, 1, "editor").await;
+
+    let ok = require_resource_audited(
+        &TableAuthority,
+        &pool,
+        &AuditCtx::default(),
+        uid,
+        ResourceRef::new(BOARD, 1),
+        ResourceRole::Editor,
+    )
+    .await
+    .expect("a sufficient role authorizes");
+    assert_eq!(ok, uid, "returns the acting user id on success");
+    assert!(
+        denied_rows(&pool, uid).await.is_empty(),
+        "an allowed access must not write a denial row",
+    );
+}
+
+/// A storage failure surfaces as `Lookup` and is **not** audited as a denial —
+/// an infrastructure error is never recast as (or logged as) a deliberate deny.
+#[tokio::test]
+async fn audited_lookup_failure_is_not_a_denial() {
+    let pool = common::pool().await;
+    let uid = common::make_user(&pool, "a@example.invalid", "password123").await;
+
+    let res = require_resource_audited(
+        &FailingAuthority,
+        &pool,
+        &AuditCtx::default(),
+        uid,
+        ResourceRef::new(BOARD, 1),
+        ResourceRole::Viewer,
+    )
+    .await;
+    assert!(matches!(res, Err(ResourceAuthzError::Lookup(_))));
+    assert!(
+        denied_rows(&pool, uid).await.is_empty(),
+        "a lookup failure must not be audited as an access denial",
     );
 }

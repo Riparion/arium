@@ -69,7 +69,8 @@ pub use arium::{
     MembershipStore, ResourceAuthority, ResourceAuthorityExt, ResourceAuthzError, ResourceGrant,
     ResourceRef, SessionStore, SharedResourceAuthority, SqlMembershipStore, TxExec, auth, authz,
     grant_membership, install, membership, migrator, pool, require_resource,
-    require_resource_or_permission, revoke_membership, transfer_ownership,
+    require_resource_audited, require_resource_or_permission, revoke_membership,
+    transfer_ownership,
 };
 
 /// Extract just the human-readable message from a server-fn error captured

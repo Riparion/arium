@@ -69,3 +69,56 @@ pub async fn require_resource_or_permission(
         Err(e @ ResourceAuthzError::Lookup(_)) => Err(e),
     }
 }
+
+/// [`require_resource`] plus the standard audit-on-denial, driven by an
+/// **already-resolved** `user_id`. The reusable kernel behind the framework
+/// adapters' session guards (e.g. dioxus's `require_resource_dioxus`).
+///
+/// The session adapters bundle three things: resolving the caller, the
+/// enforcement check, and writing a `resource.access.denied` row on refusal.
+/// Only the first is framework-specific. An app that resolves the caller
+/// through its *own* request context (not arium's session extractor) can't
+/// reuse a guard that insists on the session — so it would re-implement the
+/// audit-on-denial wrapper. This is that wrapper, with the caller resolution
+/// hoisted out to a plain `user_id`.
+///
+/// On [`ResourceAuthzError::Forbidden`] it records a `resource.access.denied`
+/// audit row — `actor_id = user_id`, details `{"kind","id","min_role"}` (the
+/// canonical lowercase role via [`ResourceRole::as_str`]), stamped with
+/// whatever IP/User-Agent the supplied [`AuditCtx`](crate::extract::AuditCtx)
+/// carries — and then returns `Forbidden` unchanged. A [`Lookup`] error passes
+/// through untouched: a storage failure is never recast as a deny, and never
+/// audited as one. The error is returned raw so each caller maps it to its own
+/// surface (a `403`/`ServerFnError`, a `404` for an existence-hiding SSE path,
+/// …). On success returns `user_id`, for reuse as the acting id.
+pub async fn require_resource_audited(
+    authority: &dyn ResourceAuthority,
+    db: &Pool,
+    audit: &crate::extract::AuditCtx,
+    user_id: i64,
+    resource: ResourceRef<'_>,
+    min_role: ResourceRole,
+) -> Result<i64, ResourceAuthzError> {
+    match require_resource(authority, db, user_id, resource, min_role).await {
+        Ok(id) => Ok(id),
+        Err(ResourceAuthzError::Forbidden) => {
+            let details = serde_json::json!({
+                "kind": resource.kind,
+                "id": resource.id,
+                "min_role": min_role.as_str(),
+            })
+            .to_string();
+            audit
+                .record(
+                    db,
+                    crate::auth::audit::RESOURCE_ACCESS_DENIED,
+                    Some(user_id),
+                    None,
+                    Some(&details),
+                )
+                .await;
+            Err(ResourceAuthzError::Forbidden)
+        }
+        Err(e @ ResourceAuthzError::Lookup(_)) => Err(e),
+    }
+}

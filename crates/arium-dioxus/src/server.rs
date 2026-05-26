@@ -687,10 +687,12 @@ pub async fn revoke_api_token(token_id: i64) -> Result<()> {
 /// is passed through unchanged. Names with control characters are rare
 /// enough that a heavier dep isn't worth pulling in.
 ///
-/// Only referenced from server-fn bodies, so gate on `server` — otherwise the
-/// wasm client build flags it as dead code. (Used by the API-token audit
-/// details and by the resource-authz enforcement wrapper.)
-#[cfg(feature = "server")]
+/// Its sole caller is the API-token audit detail (`create_api_token`), so it
+/// carries that fn's `server + tokens` gate — otherwise a build without
+/// `tokens` (or the wasm client) flags it as dead code. The resource-authz
+/// enforcement wrapper used to call this too, but that audit detail now lives
+/// in the engine's `require_resource_audited` (built with `serde_json`).
+#[cfg(all(feature = "server", feature = "tokens"))]
 fn json_string(raw: &str) -> String {
     let mut out = String::with_capacity(raw.len().saturating_add(2));
     out.push('"');
@@ -776,9 +778,13 @@ pub async fn require_resource_dioxus(
         return Err(ServerFnError::new("Not signed in.").into());
     }
     let user_id = user.id as i64;
-    match arium::authz::require_resource(
+    // The audit-on-denial composition lives in the engine
+    // (`require_resource_audited`); this wrapper only contributes the
+    // session→user_id resolution above and the dioxus error mapping below.
+    match arium::require_resource_audited(
         authority.0.as_ref(),
         db,
+        audit,
         user_id,
         arium::authz::ResourceRef::new(kind, id),
         min_role,
@@ -787,19 +793,6 @@ pub async fn require_resource_dioxus(
     {
         Ok(id) => Ok(id),
         Err(arium::authz::ResourceAuthzError::Forbidden) => {
-            let details = format!(
-                "{{\"kind\":{},\"id\":{id},\"min_role\":\"{min_role:?}\"}}",
-                json_string(kind)
-            );
-            audit
-                .record(
-                    db,
-                    auth::audit::RESOURCE_ACCESS_DENIED,
-                    Some(user_id),
-                    None,
-                    Some(&details),
-                )
-                .await;
             Err(ServerFnError::new("You don't have access to this resource.").into())
         }
         Err(arium::authz::ResourceAuthzError::Lookup(e)) => {

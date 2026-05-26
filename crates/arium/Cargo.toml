@@ -51,6 +51,7 @@ arium-wire = { workspace = true }
 arium-pool = { workspace = true }
 arium-authz = { workspace = true }
 serde = { version = "1.0.225", features = ["derive"] }
+serde_json = "1"
 anyhow = "1.0.98"
 
 # This crate is server-only — it never compiles for wasm, so the heavy

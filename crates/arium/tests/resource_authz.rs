@@ -5,10 +5,112 @@
 mod common;
 
 use arium::ResourceRole;
-use arium::authz::{ResourceAuthzError, ResourceRef, require_resource};
+use arium::authz::{
+    require_resource, require_resource_or_permission, ResourceAuthzError, ResourceGrant, ResourceRef,
+};
 use common::test_authority::{FailingAuthority, TableAuthority};
 
 const BOARD: &str = "board";
+
+/// Grant a global permission token directly (the global RBAC axis).
+async fn grant_permission(pool: &sqlx::SqlitePool, user_id: i64, token: &str) {
+    sqlx::query("INSERT INTO user_permissions (user_id, token) VALUES ($1, $2)")
+        .bind(user_id)
+        .bind(token)
+        .execute(pool)
+        .await
+        .expect("grant permission token");
+}
+
+/// The resource axis authorizes on its own — no global token needed, and the
+/// return value names the resource path.
+#[tokio::test]
+async fn resource_role_authorizes_without_a_token() {
+    let pool = common::pool().await;
+    TableAuthority::create_table(&pool).await;
+    let uid = common::make_user(&pool, "a@example.invalid", "password123").await;
+    TableAuthority::grant(&pool, uid, BOARD, 1, "editor").await;
+
+    let grant = require_resource_or_permission(
+        &TableAuthority,
+        &pool,
+        uid,
+        ResourceRef::new(BOARD, 1),
+        ResourceRole::Editor,
+        "boards:superadmin",
+    )
+    .await
+    .expect("a sufficient resource role authorizes");
+    assert_eq!(grant, ResourceGrant::Resource);
+}
+
+/// With no (or insufficient) resource role, the global permission token is the
+/// escape hatch — and the grant is reported as the global path.
+#[tokio::test]
+async fn global_permission_is_the_escape_hatch() {
+    let pool = common::pool().await;
+    TableAuthority::create_table(&pool).await;
+    let uid = common::make_user(&pool, "a@example.invalid", "password123").await;
+    // No membership row on board 1; instead, an app-wide capability.
+    grant_permission(&pool, uid, "boards:superadmin").await;
+
+    let grant = require_resource_or_permission(
+        &TableAuthority,
+        &pool,
+        uid,
+        ResourceRef::new(BOARD, 1),
+        ResourceRole::Admin,
+        "boards:superadmin",
+    )
+    .await
+    .expect("the global token authorizes when the resource role is absent");
+    assert_eq!(grant, ResourceGrant::GlobalPermission);
+}
+
+/// Neither a sufficient role nor the token → default-deny, exactly as the
+/// single-axis [`require_resource`] would.
+#[tokio::test]
+async fn neither_axis_is_forbidden() {
+    let pool = common::pool().await;
+    TableAuthority::create_table(&pool).await;
+    let uid = common::make_user(&pool, "a@example.invalid", "password123").await;
+    TableAuthority::grant(&pool, uid, BOARD, 1, "viewer").await; // below Admin
+    grant_permission(&pool, uid, "some:other:token").await; // not the one required
+
+    let res = require_resource_or_permission(
+        &TableAuthority,
+        &pool,
+        uid,
+        ResourceRef::new(BOARD, 1),
+        ResourceRole::Admin,
+        "boards:superadmin",
+    )
+    .await;
+    assert!(matches!(res, Err(ResourceAuthzError::Forbidden)));
+}
+
+/// A storage failure on the resource lookup is a `Lookup` error — the global
+/// fallback must not mask an infrastructure failure as a deny.
+#[tokio::test]
+async fn resource_lookup_failure_does_not_fall_through() {
+    let pool = common::pool().await;
+    let uid = common::make_user(&pool, "a@example.invalid", "password123").await;
+    grant_permission(&pool, uid, "boards:superadmin").await; // would pass if reached
+
+    let res = require_resource_or_permission(
+        &FailingAuthority,
+        &pool,
+        uid,
+        ResourceRef::new(BOARD, 1),
+        ResourceRole::Admin,
+        "boards:superadmin",
+    )
+    .await;
+    assert!(
+        matches!(res, Err(ResourceAuthzError::Lookup(_))),
+        "a role_on failure must surface as Lookup, never fall through to the token check",
+    );
+}
 
 #[tokio::test]
 async fn no_relationship_is_forbidden() {

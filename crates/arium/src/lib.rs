@@ -77,7 +77,8 @@ pub use config::{AuditConfig, AuthConfig, AuthConfigBuilder, RECOMMENDED_HSTS};
 pub use config::RateLimitConfig;
 
 pub use authz::{
-    require_resource, ResourceAuthority, ResourceAuthzError, ResourceRef, SharedResourceAuthority,
+    require_resource, require_resource_or_permission, ResourceAuthority, ResourceAuthzError,
+    ResourceGrant, ResourceRef, SharedResourceAuthority,
 };
 pub use membership::{
     grant_membership, revoke_membership, transfer_ownership, Membership, MembershipError,

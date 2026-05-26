@@ -6,6 +6,35 @@
 //! defining need of collaborative apps (a board, a document, a project the
 //! user owns, edits, or merely views).
 //!
+//! ## Two axes — which guard, when
+//!
+//! These are two axes of one authorization story, not two competing stories —
+//! but they answer different questions, so keep them straight by vocabulary.
+//! The global axis grants **permissions**: flat, app-wide capability *tokens*
+//! (`"users:ban"`, `"admin-console"`), checked against the session's
+//! `User.permissions` set. This module grants **roles**: an ordered *tier on
+//! one resource* ([`ResourceRole`]). Both have a level people informally call
+//! "admin" — they are not the same thing, and arium never lets them share a
+//! name in code: an app-wide capability is a permission token
+//! (`Rights::permission("...")`); a resource tier is [`ResourceRole::Admin`].
+//! Say *Admin role* for "manages this one board", *permission* for "an app-wide
+//! capability" — never bare "admin".
+//!
+//! | Gating…                                              | Use                                       | Trust model                  |
+//! |------------------------------------------------------|-------------------------------------------|------------------------------|
+//! | An app-wide capability ("reach the admin console")   | global RBAC — `Rights::permission(tok)`   | session token snapshot       |
+//! | A resource-scoped action ("edit *this* board")       | [`require_resource`]                      | fresh per-request DB lookup  |
+//! | Either may authorize (global escape hatch over a resource) | [`require_resource_or_permission`]  | resource lookup, then tokens |
+//! | Showing/hiding UI (never a security boundary)        | a UI gate (`ResourceGate`/`PermissionGate`) | cosmetic                   |
+//!
+//! The two axes are deliberately blind to each other: [`require_resource`]
+//! never reads `User.permissions`, and the global path never reads resource
+//! state. That keeps each boundary simple, but it means *neither answers "can
+//! this user act?" alone* once an app wants a global escape hatch over resource
+//! scope — so that composition lives in exactly one place,
+//! [`require_resource_or_permission`], rather than being re-derived (and left to
+//! drift) at each call site.
+//!
 //! ## The split: arium owns the boundary, the app owns the storage
 //!
 //! arium ships the *enforcement* — the [`ResourceRole`] lattice,
@@ -183,5 +212,64 @@ pub async fn require_resource(
         Ok(Some(role)) if role.at_least(min_role) => Ok(user_id),
         Ok(_) => Err(ResourceAuthzError::Forbidden),
         Err(e) => Err(ResourceAuthzError::Lookup(e)),
+    }
+}
+
+/// Which axis authorized a [`require_resource_or_permission`] call.
+///
+/// Worth surfacing (e.g. in an audit row): a grant via [`Self::GlobalPermission`]
+/// is an app-wide capability reaching *into* resource scope — a support agent
+/// editing a board they don't belong to — and usually deserves louder logging
+/// than the ordinary [`Self::Resource`] path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResourceGrant {
+    /// The user met the per-resource bar (holds a role `>= min_role`).
+    Resource,
+    /// Their resource role was absent or insufficient, but they hold the global
+    /// permission token — the app-wide escape hatch over resource scope.
+    GlobalPermission,
+}
+
+/// Authorize on **either** axis: a sufficient per-resource role, **or** a global
+/// permission token. The one place the two authorization stories compose.
+///
+/// arium's two axes are deliberately blind to each other ([`require_resource`]
+/// never reads `User.permissions`; the global RBAC path never reads resource
+/// state), which keeps each boundary simple but means *neither alone* answers
+/// "can this user act?" when an app wants a global escape hatch — a super-admin
+/// or support role that can touch resources they don't belong to. Rather than
+/// have every call site re-derive "owner OR super-admin" (where the two drift),
+/// express it once here.
+///
+/// Order and semantics: the resource check runs first; only on
+/// [`ResourceAuthzError::Forbidden`] does it fall back to the global token set
+/// ([`crate::auth::list_permissions_for_user`], which unions direct and
+/// role-derived tokens). Default-deny is preserved — an absent role *and* a
+/// missing token is [`ResourceAuthzError::Forbidden`] — and a storage failure on
+/// **either** lookup surfaces as [`ResourceAuthzError::Lookup`], never a silent
+/// deny. The return value names which axis let the caller through.
+pub async fn require_resource_or_permission(
+    authority: &dyn ResourceAuthority,
+    db: &Pool,
+    user_id: i64,
+    resource: ResourceRef<'_>,
+    min_role: ResourceRole,
+    permission: &str,
+) -> Result<ResourceGrant, ResourceAuthzError> {
+    match require_resource(authority, db, user_id, resource, min_role).await {
+        Ok(_) => Ok(ResourceGrant::Resource),
+        Err(ResourceAuthzError::Forbidden) => {
+            // Resource axis said no — consult the global axis. A failure reading
+            // tokens is still a Lookup error, not a silent deny.
+            let perms = crate::auth::list_permissions_for_user(db, user_id)
+                .await
+                .map_err(ResourceAuthzError::Lookup)?;
+            if perms.iter().any(|p| p == permission) {
+                Ok(ResourceGrant::GlobalPermission)
+            } else {
+                Err(ResourceAuthzError::Forbidden)
+            }
+        }
+        Err(e @ ResourceAuthzError::Lookup(_)) => Err(e),
     }
 }

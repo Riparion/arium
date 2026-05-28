@@ -10,8 +10,12 @@ use crate::ui::components::skeleton::Skeleton;
 use crate::ui::components::virtual_list::VirtualList;
 use crate::wire::AdminRoleDetail;
 
+// Full grid is Name / Description / Tokens / Kind; phone portrait drops
+// Tokens and Kind (see the portrait media query in style.css), so the
+// portrait template is 2 tracks.
 const ROLE_COLUMNS: &str =
-    "--data-cols: minmax(10rem, 1.5fr) minmax(12rem, 2fr) minmax(6rem, 1fr) minmax(6rem, 0.75fr);";
+    "--data-cols: minmax(0, 1.5fr) minmax(0, 2fr) minmax(0, 1fr) minmax(0, 0.75fr); \
+     --data-cols-portrait: minmax(0, 1.5fr) minmax(0, 2fr);";
 
 const ADMIN_CSS: Asset = asset!("/src/ui/admin/style.css", AssetOptions::css_module());
 
@@ -44,10 +48,10 @@ pub fn AdminRoleList(on_select: EventHandler<i64>, on_new: EventHandler<()>) -> 
                     div {
                         class: Styles::data_header,
                         role: "row",
-                        div { "Name" }
-                        div { "Description" }
-                        div { "Tokens" }
-                        div { "Kind" }
+                        div { class: Styles::data_cell, "data-label": "Name", "Name" }
+                        div { class: Styles::data_cell, "data-label": "Description", "Description" }
+                        div { class: Styles::data_cell, "data-label": "Tokens", "Tokens" }
+                        div { class: Styles::data_cell, "data-label": "Kind", "Kind" }
                     }
                     VirtualList {
                         count,

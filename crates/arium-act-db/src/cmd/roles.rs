@@ -1,3 +1,10 @@
+//! `act-db roles` — list / create / delete roles, inspect their
+//! permissions, and grant / revoke them on users.
+//!
+//! Grant and revoke accept either a numeric role id or a role name;
+//! name resolution goes through `arium::auth::list_roles` so we don't
+//! carry a second source of truth.
+
 use anyhow::Context;
 use arium::auth;
 use arium::auth::audit as ariumaudit;

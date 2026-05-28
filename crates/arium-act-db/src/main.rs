@@ -1,3 +1,33 @@
+//! `act-db` — operator-grade DB administration for arium.
+//!
+//! Plugs into the `act` host via the `arium-act` gate SDK: every verb
+//! authenticates with `-u`/`-p` against the same arium database it
+//! mutates, requires the canonical `admin` role, and writes one
+//! `audit_events` row per successful action. Reads never audit;
+//! denials are always recorded (by the gate itself).
+//!
+//! ```text
+//! act-db migrate
+//! act-db users create alice@example.com --new-password ... --verified
+//! act-db users reset-password 42 --new-password ...
+//! act-db roles grant 42 admin
+//! act-db tokens create 42 "ci-deploy"        # cleartext printed once
+//! act-db audit query --event-type user.login.failed --limit 200
+//! act-db audit prune 90
+//! ```
+//!
+//! Database selection follows arium's normal precedence:
+//! `--database-url` > `DATABASE_URL` > `--db <PATH>` (the SQLite
+//! shorthand that expands to `sqlite://<PATH>?mode=rwc`). Pass
+//! `--bootstrap` to skip the admin check — accepted only by `migrate`
+//! and `users create`, the verbs that have to run before there can be
+//! an admin to authenticate against.
+//!
+//! Every operation routes through arium's existing public APIs
+//! (`arium::auth::*`, `arium::auth::tokens::*`, `arium::auth::audit::*`).
+//! `act-db` itself contains no second source of truth about the schema —
+//! if a behavior changes in arium, `act-db` inherits it.
+
 mod audit;
 mod cmd;
 mod output;

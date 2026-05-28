@@ -1496,8 +1496,8 @@ pub mod audit {
 
         let sql = format!(
             "SELECT e.id, e.occurred_at, e.event_type, \
-                    e.actor_id, ua.email AS actor_email, \
-                    e.target_id, ut.email AS target_email, \
+                    e.actor_id, ua.email AS actor_email, ua.username AS actor_username, \
+                    e.target_id, ut.email AS target_email, ut.username AS target_username, \
                     e.ip, e.user_agent, e.details \
              FROM audit_events e \
              LEFT JOIN users ua ON ua.id = e.actor_id \
@@ -1535,8 +1535,10 @@ pub mod audit {
                 event_type: r.event_type,
                 actor_id: r.actor_id,
                 actor_email: r.actor_email,
+                actor_username: r.actor_username,
                 target_id: r.target_id,
                 target_email: r.target_email,
+                target_username: r.target_username,
                 ip: r.ip,
                 user_agent: r.user_agent,
                 details: r.details,
@@ -1575,8 +1577,10 @@ pub mod audit {
         event_type: String,
         actor_id: Option<i64>,
         actor_email: Option<String>,
+        actor_username: Option<String>,
         target_id: Option<i64>,
         target_email: Option<String>,
+        target_username: Option<String>,
         ip: Option<String>,
         user_agent: Option<String>,
         details: Option<String>,

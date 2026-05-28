@@ -1,3 +1,10 @@
+//! `act-db tokens` — list / create / revoke per-user API tokens.
+//!
+//! `create` prints the cleartext token exactly once on stdout (with a
+//! warning on stderr) and stores only the hash. There is no recovery
+//! path after that — re-mint and revoke the old one. Matches
+//! `arium::auth::tokens::create_for_user`'s contract.
+
 use arium::auth::audit as ariumaudit;
 use arium::auth::tokens;
 use arium::pool::Pool;

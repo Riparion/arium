@@ -1,3 +1,13 @@
+//! `act-db audit` — query and prune the `audit_events` table.
+//!
+//! `query` is a thin shell over `arium::auth::audit::query` with
+//! `--event-type`, `--actor-id`, `--target-id`, `--limit`, `--offset`;
+//! pair it with `--json` for grep-friendly output. `prune` deletes
+//! rows older than `<retention_days>` and then audits *itself* —
+//! `act.audit.pruned` records who pruned and how many rows went, so
+//! the operator-side trail survives the prune that wiped the original
+//! events.
+
 use arium::auth::audit as ariumaudit;
 use arium::pool::Pool;
 use arium::wire::AuditQuery;

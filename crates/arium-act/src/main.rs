@@ -1,3 +1,19 @@
+//! The `act` binary — a generic, `dotnet`-style host that discovers
+//! `act-<sub>` executables on `PATH` (and next to its own binary) and
+//! execs into them. The host has no opinion about auth, the database,
+//! or arium itself; each extension owns its own gate via the
+//! `arium_act::gate` SDK.
+//!
+//! Subcommands:
+//!
+//! - `act extensions [--paths]` — list discovered extensions
+//! - `act <sub> [args...]` — exec into `act-<sub>` with the remaining args
+//!
+//! Discovery order matches the convention used by `dotnet` and `kubectl`:
+//! the directory containing the running `act` binary first (so sibling
+//! `cargo build` outputs work without staging anything on `$PATH`), then
+//! every entry on `$PATH`. See the `extensions` module for the exact rules.
+
 mod extensions;
 
 use std::ffi::OsString;

@@ -1,3 +1,14 @@
+//! `act-db users` — list / show / create / delete / verify /
+//! reset-password / roles / disable-mfa. Every mutating verb routes
+//! through `arium::auth::*` and emits one audit row on success.
+//!
+//! Password handling: `users create` and `users reset-password` accept
+//! the target user's password via `--new-password` or prompt for it on
+//! a TTY. Both are distinct from the operator's auth password (`-p`),
+//! which the `arium-act` gate owns. Non-TTY runs without
+//! `--new-password` fail fast rather than silently set an empty
+//! password.
+
 use std::io::IsTerminal;
 
 use anyhow::Context;

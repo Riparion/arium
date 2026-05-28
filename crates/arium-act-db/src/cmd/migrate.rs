@@ -1,3 +1,8 @@
+//! `act-db migrate` — run arium's core migrator (and the membership
+//! migrator when the `membership` feature is on). Allowed under
+//! `--bootstrap` because by definition there is no schema yet to host
+//! an admin row.
+
 use arium::pool::Pool;
 
 use crate::audit;

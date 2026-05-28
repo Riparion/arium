@@ -7,10 +7,16 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 homepage.workspace = true
+readme = "README.md"
 
 [[bin]]
 name = "act-db"
 path = "src/main.rs"
+
+# Binary-only crate: tell cargo-rdme to read the crate-level //! doc
+# from src/main.rs (the act-db binary) instead of a missing lib.rs.
+[package.metadata.cargo-rdme]
+entrypoint = { type = "bin", name = "act-db" }
 
 [features]
 default = ["sqlite"]

@@ -8,8 +8,8 @@
 //!   extensions use to plug into a uniform `-u`/`-p`/admin-role flow.
 //!   Available only when one of the `gate-sqlite` or `gate-postgres`
 //!   features is enabled; with neither feature on, the library has no
-//!   surface and pulls in no transitive deps. See [`gate`] for the
-//!   contract every extension uses.
+//!   surface and pulls in no transitive deps. See the `gate` module for
+//!   the contract every extension uses.
 //!
 //! The split keeps the host binary free of arium/tokio/sqlx noise while
 //! letting every extension share one audited gate implementation. Today

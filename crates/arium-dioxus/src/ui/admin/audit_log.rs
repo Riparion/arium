@@ -15,7 +15,7 @@ const ADMIN_CSS: Asset = asset!("/src/ui/admin/style.css", AssetOptions::css_mod
 struct Styles;
 
 const AUDIT_COLUMNS: &str =
-    "--data-cols: minmax(10rem, 1fr) minmax(12rem, 1.5fr) minmax(10rem, 1.25fr);";
+    "--data-cols: minmax(0, 1fr) minmax(0, 1.5fr) minmax(0, 1.25fr);";
 
 /// Filterable, paginated audit-log table. Requires `admin:audit:read`
 /// on the signed-in user; the server fn enforces this and the table
@@ -178,7 +178,10 @@ fn EventTable(rows: Vec<AuditEventView>) -> Element {
 
 #[component]
 fn EventRow(row: AuditEventView) -> Element {
-    let actor = pretty_user(row.actor_id, row.actor_email.as_deref());
+    let actor = row
+        .actor_username
+        .clone()
+        .unwrap_or_else(|| "—".to_string());
     rsx! {
         div {
             class: Styles::data_row,
@@ -188,13 +191,5 @@ fn EventRow(row: AuditEventView) -> Element {
             div { class: Styles::data_cell, "data-label": "Event", "{row.event_type}" }
             div { class: Styles::data_cell, "data-label": "Actor", "{actor}" }
         }
-    }
-}
-
-fn pretty_user(id: Option<i64>, email: Option<&str>) -> String {
-    match (id, email) {
-        (Some(i), Some(e)) => format!("{e} (#{i})"),
-        (Some(i), None) => format!("#{i}"),
-        _ => "—".to_string(),
     }
 }

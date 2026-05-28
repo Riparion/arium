@@ -1,17 +1,20 @@
 mod audit;
 mod cmd;
-mod config;
 mod output;
 
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 
+use arium_act::gate;
 use output::Format;
 
 #[derive(Parser)]
 #[command(name = "act-db", version, about = "DB operations for arium.")]
 struct Cli {
+    #[command(flatten)]
+    auth: gate::AuthArgs,
+
     /// Render list/show output as JSON instead of human-readable.
     #[arg(long, global = true)]
     json: bool,
@@ -51,6 +54,31 @@ pub enum Cmd {
     },
 }
 
+impl Cmd {
+    /// True for verbs that may run against an empty DB (no admin yet),
+    /// i.e. via `--bootstrap`. The gate refuses `--bootstrap` for
+    /// everything else.
+    fn allows_bootstrap(&self) -> bool {
+        matches!(
+            self,
+            Cmd::Migrate
+                | Cmd::Users {
+                    op: UsersOp::Create { .. }
+                }
+        )
+    }
+
+    fn label(&self) -> &'static str {
+        match self {
+            Cmd::Migrate => "db.migrate",
+            Cmd::Users { .. } => "db.users",
+            Cmd::Roles { .. } => "db.roles",
+            Cmd::Tokens { .. } => "db.tokens",
+            Cmd::Audit { .. } => "db.audit",
+        }
+    }
+}
+
 #[derive(Subcommand)]
 pub enum UsersOp {
     /// List users (paginated).
@@ -62,11 +90,14 @@ pub enum UsersOp {
     },
     /// Show one user by id.
     Show { user_id: i64 },
-    /// Create a new password user. Prompts for password if --password is omitted.
+    /// Create a new password user. Prompts for the new user's password
+    /// if `--new-password` is omitted.
     Create {
         email: String,
-        #[arg(long)]
-        password: Option<String>,
+        /// Password for the NEW user (distinct from -p / --password,
+        /// which is the operator's auth password).
+        #[arg(long = "new-password")]
+        new_password: Option<String>,
         /// Mark the new user's email as verified immediately.
         #[arg(long)]
         verified: bool,
@@ -78,8 +109,10 @@ pub enum UsersOp {
     /// Reset a user's password (chains request_password_reset + consume_password_reset).
     ResetPassword {
         user_id: i64,
-        #[arg(long)]
-        password: Option<String>,
+        /// Replacement password for the target user (distinct from
+        /// -p / --password, which is the operator's auth password).
+        #[arg(long = "new-password")]
+        new_password: Option<String>,
     },
     /// List a user's role ids and names.
     Roles { user_id: i64 },
@@ -140,7 +173,6 @@ pub enum AuditOp {
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
-    let fmt = if cli.json { Format::Json } else { Format::Human };
 
     let rt = match tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -153,8 +185,7 @@ fn main() -> ExitCode {
         }
     };
 
-    let result = rt.block_on(run(cli.cmd, fmt));
-    match result {
+    match rt.block_on(run(cli)) {
         Ok(()) => ExitCode::from(0),
         Err(e) => {
             eprintln!("error: {e}");
@@ -163,31 +194,19 @@ fn main() -> ExitCode {
     }
 }
 
-async fn run(cmd: Cmd, fmt: Format) -> anyhow::Result<()> {
-    let url = config::resolve_database_url()?;
-    let pool = config::build_pool(&url).await?;
+async fn run(cli: Cli) -> anyhow::Result<()> {
+    let fmt = if cli.json { Format::Json } else { Format::Human };
+    let url = cli.auth.resolve_database_url()?;
+    let pool = gate::build_pool(&url).await?;
 
-    match cmd {
-        Cmd::Migrate => {
-            let actor_id = config::parse_actor_id()?;
-            cmd::migrate::run(&pool, actor_id).await
-        }
-        Cmd::Users { op } => {
-            let actor_id = config::parse_actor_id()?;
-            cmd::users::run(&pool, actor_id, op, fmt).await
-        }
-        Cmd::Roles { op } => {
-            let actor_id = config::parse_actor_id()?;
-            cmd::roles::run(&pool, actor_id, op, fmt).await
-        }
-        Cmd::Tokens { op } => {
-            let actor_id = config::parse_actor_id()?;
-            cmd::tokens::run(&pool, actor_id, op, fmt).await
-        }
-        Cmd::Audit { op } => {
-            let actor_id = config::parse_actor_id()?;
-            cmd::audit::run(&pool, actor_id, op, fmt).await
-        }
+    let actor = gate::run(&cli.auth, &pool, cli.cmd.allows_bootstrap(), cli.cmd.label()).await?;
+    let actor_id = actor.user_id();
+
+    match cli.cmd {
+        Cmd::Migrate => cmd::migrate::run(&pool, actor_id).await,
+        Cmd::Users { op } => cmd::users::run(&pool, actor_id, op, fmt).await,
+        Cmd::Roles { op } => cmd::roles::run(&pool, actor_id, op, fmt).await,
+        Cmd::Tokens { op } => cmd::tokens::run(&pool, actor_id, op, fmt).await,
+        Cmd::Audit { op } => cmd::audit::run(&pool, actor_id, op, fmt).await,
     }
 }
-

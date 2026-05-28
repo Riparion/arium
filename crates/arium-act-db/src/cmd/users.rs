@@ -15,14 +15,15 @@ pub async fn run(pool: &Pool, actor_id: i64, op: UsersOp, fmt: Format) -> anyhow
         UsersOp::Show { user_id } => show(pool, user_id, fmt).await,
         UsersOp::Create {
             email,
-            password,
+            new_password,
             verified,
-        } => create(pool, actor_id, email, password, verified, fmt).await,
+        } => create(pool, actor_id, email, new_password, verified, fmt).await,
         UsersOp::Delete { user_id } => delete(pool, actor_id, user_id).await,
         UsersOp::Verify { user_id } => verify(pool, actor_id, user_id).await,
-        UsersOp::ResetPassword { user_id, password } => {
-            reset_password(pool, actor_id, user_id, password).await
-        }
+        UsersOp::ResetPassword {
+            user_id,
+            new_password,
+        } => reset_password(pool, actor_id, user_id, new_password).await,
         UsersOp::Roles { user_id } => roles(pool, user_id, fmt).await,
         UsersOp::DisableMfa { user_id } => disable_mfa(pool, actor_id, user_id).await,
     }

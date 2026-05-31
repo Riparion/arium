@@ -159,11 +159,7 @@ pub async fn get_resource_role(
     }
     authority
         .0
-        .role_on(
-            &db.0,
-            user.id,
-            arium::authz::ResourceRef::new(&kind, id),
-        )
+        .role_on(&db.0, user.id, arium::authz::ResourceRef::new(&kind, id))
         .await
         .map_err(sfn)
 }
@@ -665,13 +661,11 @@ pub async fn get_mfa_status() -> Result<MfaStatusView, ServerFnError> {
     if user.anonymous {
         return Ok(MfaStatusView::Disabled);
     }
-    Ok(
-        match auth::mfa_status(&db.0, user.id).await.map_err(sfn)? {
-            auth::MfaStatus::Disabled => MfaStatusView::Disabled,
-            auth::MfaStatus::Pending => MfaStatusView::Pending,
-            auth::MfaStatus::Enabled => MfaStatusView::Enabled,
-        },
-    )
+    Ok(match auth::mfa_status(&db.0, user.id).await.map_err(sfn)? {
+        auth::MfaStatus::Disabled => MfaStatusView::Disabled,
+        auth::MfaStatus::Pending => MfaStatusView::Pending,
+        auth::MfaStatus::Enabled => MfaStatusView::Enabled,
+    })
 }
 
 // ============================================================

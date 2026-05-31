@@ -134,11 +134,7 @@ pub async fn get_resource_role(kind: String, id: i64) -> Result<Option<ResourceR
     }
     let role = authority
         .0
-        .role_on(
-            &db.0,
-            user.id,
-            arium::authz::ResourceRef::new(&kind, id),
-        )
+        .role_on(&db.0, user.id, arium::authz::ResourceRef::new(&kind, id))
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
     Ok(role)

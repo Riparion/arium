@@ -7,15 +7,8 @@ use dioxus_primitives::{dioxus_attributes::attributes, merge_attributes};
 
 pub use dioxus_primitives::select::SelectGroup;
 
-// See comment in card/component.rs: explicit Stylesheet emission so SSR always
-// reasserts the link tag.
-const SELECT_CSS: Asset = asset!(
-    "/src/ui/components/select/dx-select.css",
-    AssetOptions::css_module()
-);
-
-#[css_module("/src/ui/components/select/dx-select.css")]
-struct Styles;
+// See `crate::styled_module` for why we declare the Asset separately.
+crate::styled_module!(const SELECT_CSS = "/src/ui/components/select/dx-select.css");
 
 /// Single-select dropdown. Compose with [`SelectOption`] children
 /// (optionally grouped with [`SelectGroup`] + [`SelectGroupLabel`]).

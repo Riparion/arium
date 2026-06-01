@@ -1,15 +1,10 @@
 use dioxus::prelude::*;
 use dioxus_icons::lucide::BadgeCheck;
+use dioxus_primitives::dioxus_attributes::attributes;
+use dioxus_primitives::merge_attributes;
 
-// See comment in card/component.rs: explicit Stylesheet emission so SSR always
-// reasserts the link tag.
-const BADGE_CSS: Asset = asset!(
-    "/src/ui/components/badge/dx-badge.css",
-    AssetOptions::css_module()
-);
-
-#[css_module("/src/ui/components/badge/dx-badge.css")]
-struct Styles;
+// See `crate::styled_module` for why we declare the Asset separately.
+crate::styled_module!(const BADGE_CSS = "/src/ui/components/badge/dx-badge.css");
 
 /// Visual style of a [`Badge`].
 #[derive(Copy, Clone, PartialEq, Default)]
@@ -68,14 +63,14 @@ pub fn Badge(props: BadgeProps) -> Element {
 
 #[component]
 fn BadgeElement(props: BadgeProps) -> Element {
+    let base = attributes!(span {
+        class: Styles::dx_badge,
+        "data-style": props.variant.class(),
+    });
+    let merged = merge_attributes(vec![base, props.attributes]);
     rsx! {
         document::Stylesheet { href: BADGE_CSS }
-        span {
-            class: Styles::dx_badge,
-            "data-style": props.variant.class(),
-            ..props.attributes,
-            {props.children}
-        }
+        span { ..merged, {props.children} }
     }
 }
 

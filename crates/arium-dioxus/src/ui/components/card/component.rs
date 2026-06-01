@@ -1,18 +1,14 @@
 use dioxus::prelude::*;
+use dioxus_primitives::dioxus_attributes::attributes;
+use dioxus_primitives::merge_attributes;
 
-// Same file the `#[css_module]` below points at; declared as a separate `Asset` so we can
-// render a `document::Stylesheet` from every component in the module. The css_module
-// macro's own link-injection path uses a process-wide `OnceLock` that only fires once per
-// process — fine for fully client-rendered apps, but on an SSR server only the first
-// request gets the `<link>` tag. Emitting the Stylesheet from rsx! makes every render
-// reassert the link; the browser de-dupes by href so the multiple emissions are harmless.
-const CARD_CSS: Asset = asset!(
-    "/src/ui/components/card/dx-card.css",
-    AssetOptions::css_module()
-);
-
-#[css_module("/src/ui/components/card/dx-card.css")]
-struct Styles;
+// `CARD_CSS` is the explicit Asset declaration for the `#[css_module]` style.css
+// below — used to render a `document::Stylesheet { href: CARD_CSS }` from every
+// component in the module so the link tag survives SSR + post-hydration remount
+// (the `#[css_module]` macro's own emit is a one-shot OnceLock, fine for fully
+// client-rendered apps but unreliable here; see `crate::styled_module` for the
+// full explanation).
+crate::styled_module!(const CARD_CSS = "/src/ui/components/card/dx-card.css");
 
 /// Outer card surface. Compose with `Card*` subcomponents inside.
 #[component]
@@ -20,14 +16,18 @@ pub fn Card(
     #[props(extends=GlobalAttributes)] attributes: Vec<Attribute>,
     children: Element,
 ) -> Element {
+    // Merge the catalog class with the caller's attributes — emitting a literal
+    // `class:` alongside `..attributes` produces two `class=` attributes in the
+    // HTML, of which the browser keeps only the first, silently dropping the
+    // caller's class (and any subsequent class composition like Tailwind).
+    let base = attributes!(div {
+        class: Styles::dx_card,
+        "data-slot": "card",
+    });
+    let merged = merge_attributes(vec![base, attributes]);
     rsx! {
         document::Stylesheet { href: CARD_CSS }
-        div {
-            class: Styles::dx_card,
-            "data-slot": "card",
-            ..attributes,
-            {children}
-        }
+        div { ..merged, {children} }
     }
 }
 
@@ -37,14 +37,14 @@ pub fn CardHeader(
     #[props(extends=GlobalAttributes)] attributes: Vec<Attribute>,
     children: Element,
 ) -> Element {
+    let base = attributes!(div {
+        class: Styles::dx_card_header,
+        "data-slot": "card-header",
+    });
+    let merged = merge_attributes(vec![base, attributes]);
     rsx! {
         document::Stylesheet { href: CARD_CSS }
-        div {
-            class: Styles::dx_card_header,
-            "data-slot": "card-header",
-            ..attributes,
-            {children}
-        }
+        div { ..merged, {children} }
     }
 }
 
@@ -54,14 +54,14 @@ pub fn CardTitle(
     #[props(extends=GlobalAttributes)] attributes: Vec<Attribute>,
     children: Element,
 ) -> Element {
+    let base = attributes!(div {
+        class: Styles::dx_card_title,
+        "data-slot": "card-title",
+    });
+    let merged = merge_attributes(vec![base, attributes]);
     rsx! {
         document::Stylesheet { href: CARD_CSS }
-        div {
-            class: Styles::dx_card_title,
-            "data-slot": "card-title",
-            ..attributes,
-            {children}
-        }
+        div { ..merged, {children} }
     }
 }
 
@@ -71,14 +71,14 @@ pub fn CardDescription(
     #[props(extends=GlobalAttributes)] attributes: Vec<Attribute>,
     children: Element,
 ) -> Element {
+    let base = attributes!(div {
+        class: Styles::dx_card_description,
+        "data-slot": "card-description",
+    });
+    let merged = merge_attributes(vec![base, attributes]);
     rsx! {
         document::Stylesheet { href: CARD_CSS }
-        div {
-            class: Styles::dx_card_description,
-            "data-slot": "card-description",
-            ..attributes,
-            {children}
-        }
+        div { ..merged, {children} }
     }
 }
 
@@ -88,14 +88,14 @@ pub fn CardAction(
     #[props(extends=GlobalAttributes)] attributes: Vec<Attribute>,
     children: Element,
 ) -> Element {
+    let base = attributes!(div {
+        class: Styles::dx_card_action,
+        "data-slot": "card-action",
+    });
+    let merged = merge_attributes(vec![base, attributes]);
     rsx! {
         document::Stylesheet { href: CARD_CSS }
-        div {
-            class: Styles::dx_card_action,
-            "data-slot": "card-action",
-            ..attributes,
-            {children}
-        }
+        div { ..merged, {children} }
     }
 }
 
@@ -105,14 +105,14 @@ pub fn CardContent(
     #[props(extends=GlobalAttributes)] attributes: Vec<Attribute>,
     children: Element,
 ) -> Element {
+    let base = attributes!(div {
+        class: Styles::dx_card_content,
+        "data-slot": "card-content",
+    });
+    let merged = merge_attributes(vec![base, attributes]);
     rsx! {
         document::Stylesheet { href: CARD_CSS }
-        div {
-            class: Styles::dx_card_content,
-            "data-slot": "card-content",
-            ..attributes,
-            {children}
-        }
+        div { ..merged, {children} }
     }
 }
 
@@ -122,13 +122,13 @@ pub fn CardFooter(
     #[props(extends=GlobalAttributes)] attributes: Vec<Attribute>,
     children: Element,
 ) -> Element {
+    let base = attributes!(div {
+        class: Styles::dx_card_footer,
+        "data-slot": "card-footer",
+    });
+    let merged = merge_attributes(vec![base, attributes]);
     rsx! {
         document::Stylesheet { href: CARD_CSS }
-        div {
-            class: Styles::dx_card_footer,
-            "data-slot": "card-footer",
-            ..attributes,
-            {children}
-        }
+        div { ..merged, {children} }
     }
 }

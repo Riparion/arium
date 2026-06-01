@@ -20,6 +20,11 @@
 
 #![allow(clippy::needless_doctest_main)]
 
+// Re-exported as `arium_dioxus::styled_module!` (via #[macro_export]). Bundles
+// the `const X_CSS: Asset = asset!(...)` + `#[css_module] struct Styles;`
+// declarations every catalog widget needs into one statement.
+pub mod styled_module;
+
 #[cfg(feature = "ui")]
 pub mod ui;
 

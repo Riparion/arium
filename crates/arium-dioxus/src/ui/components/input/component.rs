@@ -1,14 +1,9 @@
 use dioxus::prelude::*;
+use dioxus_primitives::dioxus_attributes::attributes;
+use dioxus_primitives::merge_attributes;
 
-// See comment in card/component.rs: explicit Stylesheet emission so SSR always
-// reasserts the link tag.
-const INPUT_CSS: Asset = asset!(
-    "/src/ui/components/input/dx-input.css",
-    AssetOptions::css_module()
-);
-
-#[css_module("/src/ui/components/input/dx-input.css")]
-struct Styles;
+// See `crate::styled_module` for why we declare the Asset separately.
+crate::styled_module!(const INPUT_CSS = "/src/ui/components/input/dx-input.css");
 
 /// Themed `<input>`. Forwards every standard input event through optional
 /// handlers; any HTML attribute (`type`, `value`, `placeholder`, ...) is
@@ -39,10 +34,16 @@ pub fn Input(
     attributes: Vec<Attribute>,
     children: Element,
 ) -> Element {
+    // Merge the catalog class with the caller's attributes so a caller that
+    // passes its own `class:` doesn't produce two `class=` attributes (the
+    // browser keeps only the first, silently dropping one).
+    let base = attributes!(input {
+        class: Styles::dx_input
+    });
+    let merged = merge_attributes(vec![base, attributes]);
     rsx! {
         document::Stylesheet { href: INPUT_CSS }
         input {
-            class: Styles::dx_input,
             oninput: move |e| _ = oninput.map(|callback| callback(e)),
             onchange: move |e| _ = onchange.map(|callback| callback(e)),
             oninvalid: move |e| _ = oninvalid.map(|callback| callback(e)),
@@ -62,7 +63,7 @@ pub fn Input(
             oncopy: move |e| _ = oncopy.map(|callback| callback(e)),
             oncut: move |e| _ = oncut.map(|callback| callback(e)),
             onpaste: move |e| _ = onpaste.map(|callback| callback(e)),
-            ..attributes,
+            ..merged,
             {children}
         }
     }

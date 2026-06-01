@@ -3,15 +3,8 @@ use dioxus_primitives::avatar::{self, AvatarState};
 use dioxus_primitives::dioxus_attributes::attributes;
 use dioxus_primitives::merge_attributes;
 
-// See comment in card/component.rs: explicit Stylesheet emission so SSR always
-// reasserts the link tag.
-const AVATAR_CSS: Asset = asset!(
-    "/src/ui/components/avatar/dx-avatar.css",
-    AssetOptions::css_module()
-);
-
-#[css_module("/src/ui/components/avatar/dx-avatar.css")]
-struct Styles;
+// See `crate::styled_module` for why we declare the Asset separately.
+crate::styled_module!(const AVATAR_CSS = "/src/ui/components/avatar/dx-avatar.css");
 
 /// Dimensions preset for [`Avatar`].
 #[derive(Clone, Copy, PartialEq, Default)]

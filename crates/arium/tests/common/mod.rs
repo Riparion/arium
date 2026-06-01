@@ -66,7 +66,7 @@ async fn apply_dir(pool: &SqlitePool, dir: PathBuf) {
             if trimmed.is_empty() {
                 continue;
             }
-            sqlx::query(trimmed)
+            sqlx::query(sqlx::AssertSqlSafe(trimmed))
                 .execute(pool)
                 .await
                 .unwrap_or_else(|e| panic!("migrate {} ({trimmed}): {e}", path.display()));

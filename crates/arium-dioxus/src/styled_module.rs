@@ -1,4 +1,4 @@
-//! [`styled_module!`] — single-statement form of the css-module + asset pair
+//! [`styled_module!`](macro@crate::styled_module) — single-statement form of the css-module + asset pair
 //! every catalog widget needs.
 //!
 //! ## The pattern this replaces

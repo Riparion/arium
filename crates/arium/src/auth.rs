@@ -1507,7 +1507,9 @@ pub mod audit {
              LIMIT ${limit_idx} OFFSET ${offset_idx}",
         );
 
-        let mut qb = sqlx::query_as::<_, AuditRow>(&sql);
+        // SQL is assembled from fixed templates with positional ($N) placeholders
+        // only; all user-supplied values are bound below, never interpolated.
+        let mut qb = sqlx::query_as::<_, AuditRow>(sqlx::AssertSqlSafe(sql));
         if type_is_filtered {
             qb = qb.bind(type_pattern);
         }

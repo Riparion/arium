@@ -36,8 +36,12 @@ pub fn MfaSetup(
     #[props(default = "Two-factor authentication")] title: &'static str,
     #[props(default = "/")] back_href: &'static str,
     /// When `true`, omit the full-viewport `.dx-auth-screen`/`.dx-auth-card`
-    /// centering shell so the card renders inline (e.g. inside a tab or a
-    /// console pane). Defaults to `false` for standalone-route use.
+    /// centering shell so the card sits inline inside a page layout (a tab,
+    /// a console pane, an account screen, …). The inner `Card` still
+    /// renders with its normal border / background / shadow so it reads as
+    /// its own panel; if a caller is nesting MFA inside another `Card` and
+    /// wants the flat card-in-a-card look, they can pass a style override
+    /// at the call site. Defaults to `false` for standalone-route use.
     #[props(default = false)]
     embedded: bool,
 ) -> Element {
@@ -60,15 +64,6 @@ pub fn MfaSetup(
     } else {
         Styles::dx_auth_card.to_string()
     };
-    // Inline override beats `.dx-card` by specificity, so an embedded card
-    // sits flat in its pane (no border/background/shadow) instead of as a
-    // boxed panel — matching the inline `AccountSettings` look.
-    let card_style = if embedded {
-        "border: none; box-shadow: none; background: none;"
-    } else {
-        ""
-    };
-
     let current = profile().and_then(|r| r.ok()).unwrap_or_default();
 
     if !current.is_authenticated {
@@ -97,7 +92,6 @@ pub fn MfaSetup(
         div { class: screen_class,
             div { class: card_class,
                 Card {
-                    style: card_style,
                     CardHeader {
                         CardTitle { "{title}" }
                         CardDescription {
@@ -240,7 +234,6 @@ pub fn MfaSetup(
                                 }
                             },
                         }
-                        p { class: Styles::dx_auth_aux, a { href: "{back_href}", "Back to account" } }
                     }
                 }
             }

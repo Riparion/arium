@@ -2,15 +2,8 @@ use dioxus::prelude::*;
 use dioxus_primitives::dioxus_attributes::attributes;
 use dioxus_primitives::merge_attributes;
 
-// See comment in card/component.rs: explicit Stylesheet emission so SSR always
-// reasserts the link tag.
-const BUTTON_CSS: Asset = asset!(
-    "/src/ui/components/button/dx-button.css",
-    AssetOptions::css_module()
-);
-
-#[css_module("/src/ui/components/button/dx-button.css")]
-struct Styles;
+// See `crate::styled_module` for why we declare the Asset separately.
+crate::styled_module!(const BUTTON_CSS = "/src/ui/components/button/dx-button.css");
 
 /// Visual style of a [`Button`]. Maps to the `data-style="..."` attribute.
 #[derive(Copy, Clone, PartialEq, Default)]

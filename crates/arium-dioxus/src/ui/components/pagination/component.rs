@@ -1,15 +1,10 @@
 use dioxus::prelude::*;
 use dioxus_icons::lucide::{ChevronLeft, ChevronRight, Ellipsis};
+use dioxus_primitives::dioxus_attributes::attributes;
+use dioxus_primitives::merge_attributes;
 
-// See comment in card/component.rs: explicit Stylesheet emission so SSR always
-// reasserts the link tag.
-const PAGINATION_CSS: Asset = asset!(
-    "/src/ui/components/pagination/dx-pagination.css",
-    AssetOptions::css_module()
-);
-
-#[css_module("/src/ui/components/pagination/dx-pagination.css")]
-struct Styles;
+// See `crate::styled_module` for why we declare the Asset separately.
+crate::styled_module!(const PAGINATION_CSS = "/src/ui/components/pagination/dx-pagination.css");
 
 /// Sizing preset for a [`PaginationLink`]. `Icon` produces a square button
 /// suitable for chevron-only previous/next controls; `Default` is wider for
@@ -61,16 +56,16 @@ pub fn Pagination(
     #[props(extends = GlobalAttributes)] attributes: Vec<Attribute>,
     children: Element,
 ) -> Element {
+    let base = attributes!(nav {
+        class: Styles::dx_pagination,
+        "data-slot": "pagination",
+        role: "navigation",
+        aria_label: "pagination",
+    });
+    let merged = merge_attributes(vec![base, attributes]);
     rsx! {
         document::Stylesheet { href: PAGINATION_CSS }
-        nav {
-            class: Styles::dx_pagination,
-            "data-slot": "pagination",
-            role: "navigation",
-            aria_label: "pagination",
-            ..attributes,
-            {children}
-        }
+        nav { ..merged, {children} }
     }
 }
 
@@ -80,14 +75,14 @@ pub fn PaginationContent(
     #[props(extends = GlobalAttributes)] attributes: Vec<Attribute>,
     children: Element,
 ) -> Element {
+    let base = attributes!(ul {
+        class: Styles::dx_pagination_content,
+        "data-slot": "pagination-content",
+    });
+    let merged = merge_attributes(vec![base, attributes]);
     rsx! {
         document::Stylesheet { href: PAGINATION_CSS }
-        ul {
-            class: Styles::dx_pagination_content,
-            "data-slot": "pagination-content",
-            ..attributes,
-            {children}
-        }
+        ul { ..merged, {children} }
     }
 }
 
@@ -137,15 +132,18 @@ pub struct PaginationLinkProps {
 pub fn PaginationLink(props: PaginationLinkProps) -> Element {
     let aria_current = if props.is_active { Some("page") } else { None };
     let data_kind = props.data_kind.map(|kind| kind.attr());
+    let base = attributes!(a {
+        class: Styles::dx_pagination_link,
+        "data-slot": "pagination-link",
+        "data-active": props.is_active,
+        "data-size": props.size.class(),
+        "data-kind": data_kind,
+        aria_current: aria_current,
+    });
+    let merged = merge_attributes(vec![base, props.attributes]);
     rsx! {
         document::Stylesheet { href: PAGINATION_CSS }
         a {
-            class: Styles::dx_pagination_link,
-            "data-slot": "pagination-link",
-            "data-active": props.is_active,
-            "data-size": props.size.class(),
-            "data-kind": data_kind,
-            aria_current: aria_current,
             onclick: move |event| {
                 if let Some(f) = &props.onclick {
                     f.call(event);
@@ -161,7 +159,7 @@ pub fn PaginationLink(props: PaginationLinkProps) -> Element {
                     f.call(event);
                 }
             },
-            ..props.attributes,
+            ..merged,
             {props.children}
         }
     }
@@ -222,13 +220,15 @@ pub fn PaginationNext(
 pub fn PaginationEllipsis(
     #[props(extends = GlobalAttributes)] attributes: Vec<Attribute>,
 ) -> Element {
+    let base = attributes!(span {
+        class: Styles::dx_pagination_ellipsis,
+        "data-slot": "pagination-ellipsis",
+        aria_hidden: "true",
+    });
+    let merged = merge_attributes(vec![base, attributes]);
     rsx! {
         document::Stylesheet { href: PAGINATION_CSS }
-        span {
-            class: Styles::dx_pagination_ellipsis,
-            "data-slot": "pagination-ellipsis",
-            aria_hidden: "true",
-            ..attributes,
+        span { ..merged,
             Ellipsis { size: "1rem" }
             span { class: Styles::dx_sr_only, "More pages" }
         }

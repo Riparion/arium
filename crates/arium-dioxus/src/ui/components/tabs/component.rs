@@ -2,15 +2,8 @@ use dioxus::prelude::*;
 use dioxus_primitives::tabs::{self, TabContentProps, TabListProps, TabTriggerProps};
 use dioxus_primitives::{dioxus_attributes::attributes, merge_attributes};
 
-// See comment in card/component.rs: explicit Stylesheet emission so SSR always
-// reasserts the link tag.
-const TABS_CSS: Asset = asset!(
-    "/src/ui/components/tabs/dx-tabs.css",
-    AssetOptions::css_module()
-);
-
-#[css_module("/src/ui/components/tabs/dx-tabs.css")]
-struct Styles;
+// See `crate::styled_module` for why we declare the Asset separately.
+crate::styled_module!(const TABS_CSS = "/src/ui/components/tabs/dx-tabs.css");
 
 /// The props for the [`Tabs`] component.
 #[derive(Props, Clone, PartialEq)]

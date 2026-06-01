@@ -75,6 +75,10 @@ const SKELETON_CSS: Asset = asset!(
 // virtual_list ships only inline styles — its style.css is comment-only,
 // which manganis's css_module parser refuses. Nothing to pin here.
 const LOGIN_PANEL_CSS: Asset = asset!("/src/ui/login_panel/style.css", AssetOptions::css_module());
+// Global utility classes (.auth-form, .auth-field, .auth-label, .auth-error,
+// .auth-success, .auth-submit) used by `AccountSettings` and the admin
+// `AuditLog` screen as literal string class names — NOT a css_module.
+const AUTH_UTILITY_CSS: Asset = asset!("/src/ui/auth_utility.css");
 // Admin console tables / detail layout (AdminUserList, AuditLog, role
 // editor). Always compiled — `ui::admin` is not feature-gated.
 const ADMIN_CSS: Asset = asset!("/src/ui/admin/style.css", AssetOptions::css_module());
@@ -118,6 +122,7 @@ pub fn AuthStylesheets() -> Element {
         document::Stylesheet { href: AVATAR_CSS }
         document::Stylesheet { href: SKELETON_CSS }
         document::Stylesheet { href: LOGIN_PANEL_CSS }
+        document::Stylesheet { href: AUTH_UTILITY_CSS }
         document::Stylesheet { href: ADMIN_CSS }
         document::Stylesheet { href: VERIFY_EMAIL_CSS }
         {

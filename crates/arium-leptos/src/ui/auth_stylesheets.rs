@@ -37,6 +37,11 @@ fn bundle() -> String {
     s.push_str(include_str!("verify_email/style.css"));
     s.push_str(include_str!("admin/style.css"));
 
+    // Global utility classes (.auth-form, .auth-field, .auth-label,
+    // .auth-error, .auth-success, .auth-submit) used as literal strings by
+    // account_screens, forgot_password, reset_password, mfa, and tokens.
+    s.push_str(include_str!("auth_utility.css"));
+
     #[cfg(feature = "mail")]
     {
         s.push_str(include_str!("forgot_password/style.css"));

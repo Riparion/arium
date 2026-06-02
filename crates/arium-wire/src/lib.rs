@@ -285,6 +285,8 @@ pub struct AccountView {
     pub username: String,
     /// Display name (seeded from the OAuth provider, user-editable), if any.
     pub display_name: Option<String>,
+    /// Avatar URL (seeded from the OAuth provider, user-editable), if any.
+    pub avatar_url: Option<String>,
     /// Email on file, if any.
     pub email: Option<String>,
     /// `true` once the verification flow has completed for `email`.

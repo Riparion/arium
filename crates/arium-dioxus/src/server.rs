@@ -1053,6 +1053,7 @@ pub async fn get_account_view() -> Result<AccountView> {
     Ok(AccountView {
         username: user.username.clone(),
         display_name: user.display_name.clone(),
+        avatar_url: user.avatar_url.clone(),
         email: user.email.clone(),
         email_verified: true, // user is currently signed in, so they verified at some point
         mfa_enabled,
@@ -1083,6 +1084,40 @@ pub async fn update_display_name(new_name: String) -> Result<()> {
         .record(
             &db.0,
             auth::audit::ACCOUNT_DISPLAY_NAME_CHANGED,
+            Some(id),
+            Some(id),
+            None,
+        )
+        .await;
+    Ok(())
+}
+
+/// Set the current user's avatar URL. Pass an empty string to clear it. The
+/// value is stored verbatim — apps that surface this to end users should
+/// validate the URL before it round-trips through here (the avatar is rendered
+/// as an `<img src>` / structured-data `image`), just as display-name content
+/// is the caller's concern.
+#[post("/api/account/avatar", auth: auth::Session, db: DbExtension, audit: AuditCtx)]
+pub async fn update_avatar(avatar_url: String) -> Result<()> {
+    let user = auth
+        .current_user
+        .as_ref()
+        .ok_or_else(|| ServerFnError::new("Not signed in."))?;
+    if user.anonymous {
+        return Err(ServerFnError::new("Not signed in.").into());
+    }
+    let id = user.id;
+    let trimmed = avatar_url.trim();
+    let value = if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed)
+    };
+    auth::update_avatar(&db.0, id, value).await?;
+    audit
+        .record(
+            &db.0,
+            auth::audit::ACCOUNT_AVATAR_CHANGED,
             Some(id),
             Some(id),
             None,

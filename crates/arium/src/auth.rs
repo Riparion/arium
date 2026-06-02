@@ -508,6 +508,23 @@ pub async fn update_display_name(
     Ok(())
 }
 
+/// Set a user's avatar URL. Pass `None` to clear it (fall back to the
+/// OAuth-provided value being absent). The value is stored verbatim — callers
+/// that accept it from end users should validate the URL at their trust
+/// boundary, the same way display name content is the caller's concern.
+pub async fn update_avatar(
+    db: &Pool,
+    user_id: i64,
+    avatar_url: Option<&str>,
+) -> anyhow::Result<()> {
+    sqlx::query("UPDATE users SET avatar_url = $1 WHERE id = $2")
+        .bind(avatar_url)
+        .bind(user_id)
+        .execute(db)
+        .await?;
+    Ok(())
+}
+
 // ---- Admin / paginated user listing ----
 
 /// Row shape returned by [`list_users_for_admin`] — fields the admin UI
@@ -1371,6 +1388,8 @@ pub mod audit {
     pub const ACCOUNT_PASSWORD_CHANGED: &str = "account.password_changed";
     /// User changed their own display name.
     pub const ACCOUNT_DISPLAY_NAME_CHANGED: &str = "account.display_name_changed";
+    /// User changed their own avatar.
+    pub const ACCOUNT_AVATAR_CHANGED: &str = "account.avatar_changed";
     /// User soft-deleted their own account.
     pub const ACCOUNT_SELF_DELETED: &str = "account.self_deleted";
 

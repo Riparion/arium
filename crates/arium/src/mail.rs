@@ -50,14 +50,24 @@ impl Mailer {
     ///
     /// Without `SMTP_HOST` we fall back to a file backend at `./emails/`.
     pub fn from_env() -> anyhow::Result<Self> {
+        // Treat a present-but-empty var the same as unset. Container
+        // orchestrators commonly inject `""` rather than leaving a var absent
+        // (e.g. docker-compose's `FROM_EMAIL: ${FROM_EMAIL:-}`), and the bare
+        // `var().unwrap_or_else(default)` only falls back when the var is
+        // *missing* — so an empty `FROM_EMAIL` would reach `"".parse::<Mailbox>()`,
+        // which is an `Invalid input` error and panics the app at boot.
         let from: Mailbox = std::env::var("FROM_EMAIL")
-            .unwrap_or_else(|_| "noreply@localhost".to_string())
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| "noreply@localhost".to_string())
             .parse()?;
         let base_url = std::env::var("PUBLIC_BASE_URL")
-            .unwrap_or_else(|_| "http://localhost:8080".to_string());
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| "http://localhost:8080".to_string());
 
         let backend = match std::env::var("SMTP_HOST") {
-            Ok(host) if !host.is_empty() => {
+            Ok(host) if !host.trim().is_empty() => {
                 let port = std::env::var("SMTP_PORT")
                     .ok()
                     .and_then(|s| s.parse().ok())

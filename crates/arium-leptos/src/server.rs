@@ -1178,6 +1178,7 @@ pub async fn get_account_view() -> Result<AccountView, ServerFnError> {
     Ok(AccountView {
         username: user.username.clone(),
         display_name: user.display_name.clone(),
+        avatar_url: user.avatar_url.clone(),
         email: user.email.clone(),
         email_verified: true, // user is currently signed in, so they verified at some point
         mfa_enabled,

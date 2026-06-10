@@ -19,6 +19,7 @@
 //! [`migrator`]: crate::migrator
 
 use crate::auth::tokens::hash_api_token;
+use crate::auth::unix_now;
 use crate::pool::Pool;
 use axum::body::Body;
 use axum::http::{Request, header::AUTHORIZATION};
@@ -68,12 +69,11 @@ pub async fn authenticate_token(pool: &Pool, token: &str) -> Option<ApiKeyUser> 
         Ok(Some((key_id, user_id))) => {
             let p = pool.clone();
             tokio::spawn(async move {
-                if let Err(e) = sqlx::query(
-                    "UPDATE api_keys SET last_used_at = CURRENT_TIMESTAMP WHERE id = $1",
-                )
-                .bind(key_id)
-                .execute(&p)
-                .await
+                if let Err(e) = sqlx::query("UPDATE api_keys SET last_used_at = $1 WHERE id = $2")
+                    .bind(unix_now())
+                    .bind(key_id)
+                    .execute(&p)
+                    .await
                 {
                     eprintln!("[api_key] WARN: last_used_at update failed (key {key_id}): {e}");
                 }

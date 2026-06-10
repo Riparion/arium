@@ -134,6 +134,52 @@ async fn revoke_removes_token_from_list() {
     assert!(!again, "second revoke is a no-op (already revoked)");
 }
 
+// Regression for the api_keys time-column type mismatch (migration 0009):
+// `authenticate_token` bumps `last_used_at`, and `list_for_user` then reads it
+// back as an i64 epoch. The old code wrote `CURRENT_TIMESTAMP` (a TEXT/timestamp
+// value), which made the subsequent list fail to decode. After the fix the bump
+// is an epoch and the round-trip succeeds with `last_used_at` populated.
+#[tokio::test]
+async fn used_token_lists_with_populated_last_used_at() {
+    let pool = common::pool().await;
+    let user_id = common::make_user(&pool, "alice@example.com", "hunter22!").await;
+
+    let (plaintext, view) = tokens::create_for_user(&pool, user_id, "laptop")
+        .await
+        .unwrap();
+
+    let resolved = arium::authenticate_token(&pool, &plaintext).await;
+    assert_eq!(
+        resolved.map(|u| u.user_id),
+        Some(user_id),
+        "a freshly minted token must authenticate",
+    );
+
+    // The bump runs in a spawned task; give it a moment to land, retrying the
+    // list (which must never error) until last_used_at is recorded.
+    let mut listed = Vec::new();
+    for _ in 0..50 {
+        listed = tokens::list_for_user(&pool, user_id)
+            .await
+            .expect("list must decode last_used_at as an epoch, not fail");
+        if listed
+            .first()
+            .and_then(|t| t.last_used_at_iso.as_ref())
+            .is_some()
+        {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].id, view.id);
+    assert!(
+        listed[0].last_used_at_iso.is_some(),
+        "last_used_at must be set after the token was used: {listed:?}",
+    );
+}
+
 #[tokio::test]
 async fn revoke_rejects_other_users_token() {
     let pool = common::pool().await;

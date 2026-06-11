@@ -134,7 +134,7 @@ async fn revoke_removes_token_from_list() {
     assert!(!again, "second revoke is a no-op (already revoked)");
 }
 
-// Regression for the api_keys time-column type mismatch (migration 0009):
+// Regression for the api_keys time-column type mismatch (migration 0010):
 // `authenticate_token` bumps `last_used_at`, and `list_for_user` then reads it
 // back as an i64 epoch. The old code wrote `CURRENT_TIMESTAMP` (a TEXT/timestamp
 // value), which made the subsequent list fail to decode. After the fix the bump

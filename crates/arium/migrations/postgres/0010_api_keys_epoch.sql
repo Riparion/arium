@@ -10,6 +10,11 @@
 -- SQLite slipped through because its column affinity stored the bound i64
 -- as-is; CI never exercises the Postgres query path. Convert in place,
 -- preserving each row's instant via EXTRACT(EPOCH …).
+--
+-- Numbered 0010, not 0009: the membership migrator's 0009_resource_members
+-- shares the `_sqlx_migrations` table (see `migrator()` / `ignore_missing`),
+-- so version 9 is already taken. Core and membership share one monotonic
+-- version space.
 ALTER TABLE api_keys ALTER COLUMN created_at DROP DEFAULT;
 ALTER TABLE api_keys ALTER COLUMN created_at   TYPE BIGINT USING EXTRACT(EPOCH FROM created_at)::BIGINT;
 ALTER TABLE api_keys ALTER COLUMN last_used_at TYPE BIGINT USING EXTRACT(EPOCH FROM last_used_at)::BIGINT;

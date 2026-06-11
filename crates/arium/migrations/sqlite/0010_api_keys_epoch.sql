@@ -1,4 +1,4 @@
--- SQLite mirror of the Postgres 0009. SQLite columns are NUMERIC-affinity, so
+-- SQLite mirror of the Postgres 0010. SQLite columns are NUMERIC-affinity, so
 -- the bound i64 epochs already store and read back as integers — the table
 -- never broke here the way Postgres did. The one inconsistency: the old
 -- `authenticate_token` bump wrote `last_used_at = CURRENT_TIMESTAMP` (a TEXT
